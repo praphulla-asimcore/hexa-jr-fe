@@ -84,7 +84,7 @@ async function postJournalEntry(orgId, payload) {
   const tld = getZohoDomain();
   try {
     const response = await axios.post(
-      `https://www.zohoapis.${tld}/books/v3/journalentries?organization_id=${orgId}`,
+      `https://www.zohoapis.${tld}/books/v3/manualjournals?organization_id=${orgId}`,
       payload,
       { headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' } }
     );
