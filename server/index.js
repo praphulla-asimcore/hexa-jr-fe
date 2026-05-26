@@ -12,6 +12,7 @@ const app = express();
 const allowedOrigins = [
   'http://localhost:5173',
   /\.vercel\.app$/,
+  'https://hexajrfe.hexamatics.finance',
 ];
 
 app.use(cors({
