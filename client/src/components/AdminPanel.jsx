@@ -9,7 +9,9 @@ export default function AdminPanel({ onClose }) {
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
   const [refreshToken, setRefreshToken] = useState('');
+  const [authCode, setAuthCode] = useState('');
   const [loading, setLoading] = useState(false);
+  const [exchanging, setExchanging] = useState(false);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -67,6 +69,39 @@ export default function AdminPanel({ onClose }) {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  function buildAuthUrl() {
+    if (!clientId.trim()) return null;
+    const scope = 'ZohoBooks.fullaccess.all';
+    return `https://accounts.zoho.com/oauth/v2/auth?scope=${encodeURIComponent(scope)}&client_id=${encodeURIComponent(clientId.trim())}&response_type=code&access_type=offline&redirect_uri=${encodeURIComponent('https://www.zoho.com')}`;
+  }
+
+  async function handleExchange() {
+    if (!clientId.trim() || !clientSecret.trim() || !authCode.trim()) {
+      setError('Client ID, Client Secret and Auth Code are all required.');
+      return;
+    }
+    setExchanging(true);
+    setError('');
+    setSuccess('');
+    try {
+      const res = await fetch('/api/admin/exchange-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+        body: JSON.stringify({ clientId: clientId.trim(), clientSecret: clientSecret.trim(), code: authCode.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Exchange failed.');
+      setRefreshToken(data.refreshToken);
+      setConfigured(true);
+      setSuccess('Refresh token obtained and saved automatically. Run a connection test to verify.');
+      setAuthCode('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setExchanging(false);
     }
   }
 
@@ -206,27 +241,48 @@ export default function AdminPanel({ onClose }) {
               </div>
 
               <div className="admin-guide">
-                <div className="admin-guide-title">How to get Zoho credentials</div>
+                <div className="admin-guide-title">Authorize with Zoho — step by step</div>
                 <ol className="admin-guide-steps">
-                  <li>Go to <strong>api-console.zoho.com</strong> and sign in as the Zoho Books owner.</li>
-                  <li>Click <strong>Add Client</strong> and choose <strong>Self Client</strong>.</li>
-                  <li>Copy the <strong>Client ID</strong> and <strong>Client Secret</strong> shown.</li>
-                  <li>Click the <strong>Generate Code</strong> tab. Enter scope:<br />
-                    <code>ZohoBooks.accountants.ALL</code>
-                  </li>
-                  <li>Set Time Duration to <strong>10 minutes</strong>, click <strong>Create</strong>. Copy the code.</li>
-                  <li>Open Terminal and run this command (replace placeholders):<br />
-                    <code>
-                      curl -X POST "https://accounts.zoho.com/oauth/v2/token" \<br />
-                      &nbsp;-d "grant_type=authorization_code" \<br />
-                      &nbsp;-d "client_id=YOUR_CLIENT_ID" \<br />
-                      &nbsp;-d "client_secret=YOUR_CLIENT_SECRET" \<br />
-                      &nbsp;-d "redirect_uri=https://www.zoho.com/books" \<br />
-                      &nbsp;-d "code=YOUR_CODE"
-                    </code>
-                  </li>
-                  <li>The response will contain <strong>refresh_token</strong> — copy that value here.</li>
+                  <li>Go to <strong>api-console.zoho.com</strong>, sign in as the Zoho Books owner, click <strong>Add Client</strong> and choose <strong>Self Client</strong>.</li>
+                  <li>Copy the <strong>Client ID</strong> and <strong>Client Secret</strong> into the fields above, then click the button below to open the Zoho authorization page:</li>
                 </ol>
+                <div style={{ margin: '10px 0 14px' }}>
+                  <a
+                    href={buildAuthUrl() || '#'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`btn btn-secondary btn-sm${!clientId.trim() ? ' disabled' : ''}`}
+                    onClick={(e) => !clientId.trim() && e.preventDefault()}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                    Open Zoho Authorization Page
+                  </a>
+                  {!clientId.trim() && <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--text-muted)' }}>Enter Client ID first</span>}
+                </div>
+                <ol className="admin-guide-steps" start={3}>
+                  <li>On the Zoho page, click the <strong>Generate Code</strong> tab. The scope <code>ZohoBooks.fullaccess.all</code> is pre-filled in the URL. Set duration to <strong>10 minutes</strong> and click <strong>Create</strong>.</li>
+                  <li>Copy the code shown, paste it below, and click <strong>Exchange for Token</strong> — no curl needed.</li>
+                </ol>
+                <div className="admin-field" style={{ marginTop: 12 }}>
+                  <label className="label">Auth Code (from Zoho)</label>
+                  <input
+                    type="text"
+                    value={authCode}
+                    onChange={(e) => setAuthCode(e.target.value)}
+                    placeholder="1000.xxxxxx.xxxxxx"
+                    autoComplete="off"
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={handleExchange}
+                  disabled={exchanging || !clientId.trim() || !clientSecret.trim() || !authCode.trim()}
+                  style={{ marginTop: 8 }}
+                >
+                  {exchanging ? <><span className="spinner" />Exchanging...</> : 'Exchange for Token'}
+                </button>
               </div>
             </form>
           )}
