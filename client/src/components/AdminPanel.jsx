@@ -212,7 +212,7 @@ export default function AdminPanel({ onClose }) {
                   <li>Click <strong>Add Client</strong> and choose <strong>Self Client</strong>.</li>
                   <li>Copy the <strong>Client ID</strong> and <strong>Client Secret</strong> shown.</li>
                   <li>Click the <strong>Generate Code</strong> tab. Enter scope:<br />
-                    <code>ZohoBooks.accountants.READ,ZohoBooks.journals.CREATE</code>
+                    <code>ZohoBooks.accountants.ALL</code>
                   </li>
                   <li>Set Time Duration to <strong>10 minutes</strong>, click <strong>Create</strong>. Copy the code.</li>
                   <li>Open Terminal and run this command (replace placeholders):<br />
