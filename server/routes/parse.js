@@ -1,22 +1,15 @@
 const express = require('express');
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
-const { parseExcel } = require('../services/parser');
+const { parseExcelBuffer } = require('../services/parser');
 
 const router = express.Router();
 
-const uploadsDir = path.join(__dirname, '../uploads');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: uploadsDir,
-  filename: (req, file, cb) => cb(null, `csi-${Date.now()}.xlsx`),
-});
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
-    const ok = file.mimetype.includes('spreadsheet') || file.originalname.endsWith('.xlsx') || file.originalname.endsWith('.xls');
+    const ok = file.mimetype.includes('spreadsheet') ||
+      file.originalname.endsWith('.xlsx') ||
+      file.originalname.endsWith('.xls');
     cb(null, ok);
   },
   limits: { fileSize: 20 * 1024 * 1024 },
@@ -28,9 +21,7 @@ router.post('/', upload.single('file'), (req, res) => {
   }
 
   try {
-    const entities = parseExcel(req.file.path);
-
-    fs.unlink(req.file.path, () => {});
+    const entities = parseExcelBuffer(req.file.buffer);
 
     if (entities.length === 0) {
       return res.status(422).json({ error: 'No valid entities found. Check that sheets have Employee ID and CTC Hexa columns with data.' });
@@ -48,7 +39,6 @@ router.post('/', upload.single('file'), (req, res) => {
       },
     });
   } catch (err) {
-    if (req.file) fs.unlink(req.file.path, () => {});
     console.error('Parse error:', err);
     res.status(500).json({ error: err.message || 'Failed to parse file.' });
   }

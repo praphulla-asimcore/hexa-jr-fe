@@ -20,8 +20,7 @@ function toNum(val) {
   return isNaN(n) ? 0 : n;
 }
 
-function parseExcel(filePath) {
-  const workbook = XLSX.readFile(filePath, { cellDates: true });
+function parseWorkbook(workbook) {
   const entities = [];
 
   for (const sheetName of workbook.SheetNames) {
@@ -81,4 +80,14 @@ function parseExcel(filePath) {
   return entities;
 }
 
-module.exports = { parseExcel };
+function parseExcelBuffer(buffer) {
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+  return parseWorkbook(workbook);
+}
+
+function parseExcel(filePath) {
+  const workbook = XLSX.readFile(filePath, { cellDates: true });
+  return parseWorkbook(workbook);
+}
+
+module.exports = { parseExcel, parseExcelBuffer };

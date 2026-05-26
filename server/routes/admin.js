@@ -73,11 +73,15 @@ router.post('/credentials', requireAdmin, (req, res) => {
   content = setEnvVar(content, 'ZOHO_CLIENT_SECRET', clientSecret);
   content = setEnvVar(content, 'ZOHO_REFRESH_TOKEN', refreshToken);
 
-  fs.writeFileSync(ENV_PATH, content, 'utf8');
-
   process.env.ZOHO_CLIENT_ID = clientId;
   process.env.ZOHO_CLIENT_SECRET = clientSecret;
   process.env.ZOHO_REFRESH_TOKEN = refreshToken;
+
+  try {
+    fs.writeFileSync(ENV_PATH, content, 'utf8');
+  } catch {
+    // read-only filesystem on Vercel — env vars must be set via Vercel dashboard
+  }
 
   res.json({ ok: true });
 });
