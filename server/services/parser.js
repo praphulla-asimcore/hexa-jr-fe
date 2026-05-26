@@ -70,7 +70,7 @@ function parseWorkbook(workbook) {
     const totalCTC = employees.reduce((sum, e) => sum + e.ctcHexa, 0);
 
     entities.push({
-      sheetName,
+      sheetName: sheetName.trim(),
       employees,
       totalCTC: Math.round(totalCTC * 100) / 100,
       missingColumns: missingCols,
