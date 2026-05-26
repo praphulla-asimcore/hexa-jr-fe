@@ -74,4 +74,4 @@ async function postJournalEntry(orgId, payload) {
   return data.journal;
 }
 
-module.exports = { fetchAccounts, postJournalEntry };
+module.exports = { getAccessToken, fetchAccounts, postJournalEntry };

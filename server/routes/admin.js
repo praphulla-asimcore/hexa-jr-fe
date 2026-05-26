@@ -1,0 +1,94 @@
+const express = require('express');
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const { getAccessToken } = require('../services/zoho');
+
+const router = express.Router();
+const adminConfig = require('../config/admin.json');
+
+const sessions = new Set();
+const ENV_PATH = path.join(__dirname, '../.env');
+
+function requireAdmin(req, res, next) {
+  const token = req.headers['x-admin-token'];
+  if (!token || !sessions.has(token)) {
+    return res.status(401).json({ error: 'Unauthorised.' });
+  }
+  next();
+}
+
+function readEnv() {
+  try { return fs.readFileSync(ENV_PATH, 'utf8'); } catch { return ''; }
+}
+
+function setEnvVar(content, key, value) {
+  const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const line = `${key}=${escaped}`;
+  const regex = new RegExp(`^${key}=.*$`, 'm');
+  if (regex.test(content)) {
+    return content.replace(regex, line);
+  }
+  return content.trimEnd() + '\n' + line + '\n';
+}
+
+router.post('/login', async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: 'Email and password required.' });
+  if (email.toLowerCase() !== adminConfig.email.toLowerCase()) {
+    return res.status(401).json({ error: 'Invalid credentials.' });
+  }
+  const ok = await bcrypt.compare(password, adminConfig.passwordHash);
+  if (!ok) return res.status(401).json({ error: 'Invalid credentials.' });
+  const token = crypto.randomUUID();
+  sessions.add(token);
+  res.json({ token });
+});
+
+router.post('/logout', (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (token) sessions.delete(token);
+  res.json({ ok: true });
+});
+
+router.get('/status', (req, res) => {
+  res.json({
+    configured: !!(
+      process.env.ZOHO_CLIENT_ID &&
+      process.env.ZOHO_CLIENT_SECRET &&
+      process.env.ZOHO_REFRESH_TOKEN
+    ),
+  });
+});
+
+router.post('/credentials', requireAdmin, (req, res) => {
+  const { clientId, clientSecret, refreshToken } = req.body || {};
+  if (!clientId || !clientSecret || !refreshToken) {
+    return res.status(400).json({ error: 'All three Zoho credential fields are required.' });
+  }
+
+  let content = readEnv();
+  content = setEnvVar(content, 'ZOHO_CLIENT_ID', clientId);
+  content = setEnvVar(content, 'ZOHO_CLIENT_SECRET', clientSecret);
+  content = setEnvVar(content, 'ZOHO_REFRESH_TOKEN', refreshToken);
+
+  fs.writeFileSync(ENV_PATH, content, 'utf8');
+
+  process.env.ZOHO_CLIENT_ID = clientId;
+  process.env.ZOHO_CLIENT_SECRET = clientSecret;
+  process.env.ZOHO_REFRESH_TOKEN = refreshToken;
+
+  res.json({ ok: true });
+});
+
+router.post('/test', requireAdmin, async (req, res) => {
+  try {
+    await getAccessToken();
+    res.json({ ok: true, message: 'Zoho connection successful.' });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+module.exports = router;
