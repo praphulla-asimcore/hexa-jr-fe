@@ -3,6 +3,11 @@ const axios = require('axios');
 let cachedToken = null;
 let tokenExpiry = 0;
 
+function getZohoDomain() {
+  const tld = (process.env.ZOHO_DOMAIN || 'com').replace(/^\./, '');
+  return tld;
+}
+
 async function getAccessToken() {
   if (cachedToken && Date.now() < tokenExpiry - 60000) {
     return cachedToken;
@@ -14,6 +19,8 @@ async function getAccessToken() {
     throw new Error('Zoho credentials not configured in .env');
   }
 
+  const tld = getZohoDomain();
+
   const params = new URLSearchParams({
     refresh_token: ZOHO_REFRESH_TOKEN,
     client_id: ZOHO_CLIENT_ID,
@@ -22,7 +29,7 @@ async function getAccessToken() {
   });
 
   const response = await axios.post(
-    'https://accounts.zoho.com/oauth/v2/token',
+    `https://accounts.zoho.${tld}/oauth/v2/token`,
     params.toString(),
     { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
   );
@@ -38,11 +45,12 @@ async function getAccessToken() {
 
 async function fetchAccounts(orgId) {
   const token = await getAccessToken();
+  const tld = getZohoDomain();
   const response = await axios.get(
-    `https://www.zohoapis.com/books/v3/chartofaccounts?organization_id=${orgId}`,
+    `https://www.zohoapis.${tld}/books/v3/chartofaccounts?organization_id=${orgId}`,
     {
       headers: { Authorization: `Zoho-oauthtoken ${token}` },
-      params: { filter_by: 'AccountType.All', per_page: 200 },
+      params: { per_page: 200 },
     }
   );
 
@@ -60,8 +68,9 @@ async function fetchAccounts(orgId) {
 
 async function postJournalEntry(orgId, payload) {
   const token = await getAccessToken();
+  const tld = getZohoDomain();
   const response = await axios.post(
-    `https://www.zohoapis.com/books/v3/journalentries?organization_id=${orgId}`,
+    `https://www.zohoapis.${tld}/books/v3/journalentries?organization_id=${orgId}`,
     payload,
     { headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' } }
   );
