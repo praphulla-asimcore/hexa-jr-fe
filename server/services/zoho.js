@@ -43,44 +43,61 @@ async function getAccessToken() {
   return cachedToken;
 }
 
+function zohoError(context, err) {
+  if (err.response) {
+    const body = err.response.data;
+    const msg = (typeof body === 'object' ? body.message : String(body)) || err.message;
+    return new Error(`Zoho ${context} [${err.response.status}]: ${msg}`);
+  }
+  return err;
+}
+
 async function fetchAccounts(orgId) {
   const token = await getAccessToken();
   const tld = getZohoDomain();
-  const response = await axios.get(
-    `https://www.zohoapis.${tld}/books/v3/chartofaccounts?organization_id=${orgId}`,
-    {
-      headers: { Authorization: `Zoho-oauthtoken ${token}` },
-      params: { per_page: 200 },
+  try {
+    const response = await axios.get(
+      `https://www.zohoapis.${tld}/books/v3/chartofaccounts?organization_id=${orgId}`,
+      {
+        headers: { Authorization: `Zoho-oauthtoken ${token}` },
+        params: { per_page: 200 },
+      }
+    );
+
+    const data = response.data;
+    if (data.code !== 0) {
+      throw new Error(`Zoho accounts error [${data.code}]: ${data.message}`);
     }
-  );
 
-  const data = response.data;
-  if (data.code !== 0) {
-    throw new Error(`Zoho accounts error: ${data.message}`);
+    return (data.chartofaccounts || []).map((a) => ({
+      id: a.account_id,
+      name: a.account_name,
+      type: a.account_type,
+    }));
+  } catch (err) {
+    throw zohoError('accounts', err);
   }
-
-  return (data.chartofaccounts || []).map((a) => ({
-    id: a.account_id,
-    name: a.account_name,
-    type: a.account_type,
-  }));
 }
 
 async function postJournalEntry(orgId, payload) {
   const token = await getAccessToken();
   const tld = getZohoDomain();
-  const response = await axios.post(
-    `https://www.zohoapis.${tld}/books/v3/journalentries?organization_id=${orgId}`,
-    payload,
-    { headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' } }
-  );
+  try {
+    const response = await axios.post(
+      `https://www.zohoapis.${tld}/books/v3/journalentries?organization_id=${orgId}`,
+      payload,
+      { headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' } }
+    );
 
-  const data = response.data;
-  if (data.code !== 0) {
-    throw new Error(`Zoho JE error: ${data.message}`);
+    const data = response.data;
+    if (data.code !== 0) {
+      throw new Error(`Zoho JE error [${data.code}]: ${data.message}`);
+    }
+
+    return data.journal;
+  } catch (err) {
+    throw zohoError('journal entry', err);
   }
-
-  return data.journal;
 }
 
 module.exports = { getAccessToken, fetchAccounts, postJournalEntry };
