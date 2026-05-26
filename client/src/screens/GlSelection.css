@@ -1,0 +1,44 @@
+.gl-screen {}
+
+.gl-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.gl-card {}
+.gl-card-warn { border-color: var(--warning-border); background: var(--warning-bg); }
+
+.gl-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  gap: 16px;
+}
+
+.gl-card-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.gl-card-badges {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.gl-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 0 24px 24px;
+}
+
+@media (max-width: 700px) {
+  .gl-fields { grid-template-columns: 1fr; }
+}
+
+.gl-field {}
