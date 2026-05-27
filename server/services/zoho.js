@@ -46,8 +46,8 @@ async function getAccessToken() {
 function zohoError(context, err) {
   if (err.response) {
     const body = err.response.data;
-    const msg = (typeof body === 'object' ? body.message : String(body)) || err.message;
-    return new Error(`Zoho ${context} [${err.response.status}]: ${msg}`);
+    const msg = typeof body === 'object' ? JSON.stringify(body) : String(body);
+    return new Error(`Zoho ${context} [${err.response.status}]: ${msg || err.message}`);
   }
   return err;
 }
@@ -82,20 +82,33 @@ async function fetchAccounts(orgId) {
 async function postJournalEntry(orgId, payload) {
   const token = await getAccessToken();
   const tld = getZohoDomain();
+  const url = `https://www.zohoapis.${tld}/books/v3/manualjournals`;
+  console.log('[Zoho POST]', url, 'org:', orgId);
+  console.log('[Zoho payload]', JSON.stringify(payload));
   try {
     const response = await axios.post(
-      `https://www.zohoapis.${tld}/books/v3/manualjournals?organization_id=${orgId}`,
+      url,
       payload,
-      { headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' } }
+      {
+        headers: {
+          Authorization: `Zoho-oauthtoken ${token}`,
+          'Content-Type': 'application/json',
+        },
+        params: { organization_id: String(orgId).trim() },
+      }
     );
 
     const data = response.data;
+    console.log('[Zoho response]', JSON.stringify(data));
     if (data.code !== 0) {
       throw new Error(`Zoho JE error [${data.code}]: ${data.message}`);
     }
 
     return data.journal;
   } catch (err) {
+    if (err.response) {
+      console.error('[Zoho error]', err.response.status, JSON.stringify(err.response.data));
+    }
     throw zohoError('journal entry', err);
   }
 }

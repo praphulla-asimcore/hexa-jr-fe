@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const { getAccessToken } = require('../services/zoho');
+const orgs = require('../config/orgs.json');
 
 const router = express.Router();
 const adminConfig = require('../config/admin.json');
@@ -88,12 +89,37 @@ router.post('/credentials', requireAdmin, (req, res) => {
 });
 
 router.post('/test', requireAdmin, async (req, res) => {
+  const tld = (process.env.ZOHO_DOMAIN || 'com').replace(/^\./, '');
+  const results = {};
   try {
     await getAccessToken();
-    res.json({ ok: true, message: 'Zoho connection successful.' });
+    results.auth = 'ok';
   } catch (err) {
-    res.status(502).json({ error: err.message });
+    return res.status(502).json({ error: `Auth failed: ${err.message}` });
   }
+
+  // Test manualjournals endpoint for each org
+  const token = await getAccessToken();
+  for (const [entity, orgId] of Object.entries(orgs)) {
+    try {
+      const r = await axios.get(
+        `https://www.zohoapis.${tld}/books/v3/manualjournals`,
+        {
+          headers: { Authorization: `Zoho-oauthtoken ${token}` },
+          params: { organization_id: orgId, per_page: 1 },
+        }
+      );
+      results[entity] = { status: r.status, code: r.data.code, message: r.data.message };
+    } catch (err) {
+      results[entity] = {
+        status: err.response?.status,
+        body: err.response?.data,
+        error: err.message,
+      };
+    }
+  }
+
+  res.json(results);
 });
 
 router.post('/exchange-code', requireAdmin, async (req, res) => {
