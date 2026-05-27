@@ -268,42 +268,13 @@ export default function AdminPanel({ onClose }) {
               </div>
 
               <div className="admin-guide">
-                <div className="admin-guide-title">Authorize with Zoho — step by step</div>
+                <div className="admin-guide-title">Get a Zoho refresh token — step by step</div>
                 <ol className="admin-guide-steps">
-                  <li>Go to <strong>api-console.zoho.com</strong>, sign in as the Zoho Books owner, click <strong>Add Client</strong> and choose <strong>Self Client</strong>.</li>
-                  <li>Copy the <strong>Client ID</strong> and <strong>Client Secret</strong> into the fields above, then click the button below to open the Zoho authorization page:</li>
+                  <li>Go to <strong>api-console.zoho.com</strong>, sign in as the Zoho Books owner. If you don't have a Self Client yet, click <strong>Add Client</strong> → <strong>Self Client</strong> and create one.</li>
+                  <li>Copy the <strong>Client ID</strong> and <strong>Client Secret</strong> from your Self Client into the fields above.</li>
+                  <li>On api-console.zoho.com, click your Self Client, then open the <strong>Generate Code</strong> tab. Enter scope <code>ZohoBooks.fullaccess.all</code>, set duration to <strong>10 minutes</strong>, and click <strong>Create</strong>. <strong>Do not</strong> use any external authorization URL — generate the code directly here.</li>
+                  <li>Copy the code shown, paste it into the <strong>Auth Code</strong> field below, and click <strong>Exchange for Token</strong>.</li>
                 </ol>
-                <div style={{ margin: '10px 0 14px' }}>
-                  <a
-                    href={buildAuthUrl() || '#'}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`btn btn-secondary btn-sm${!clientId.trim() ? ' disabled' : ''}`}
-                    onClick={(e) => !clientId.trim() && e.preventDefault()}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                  >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                    Open Zoho Authorization Page
-                  </a>
-                  {!clientId.trim() && <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--text-muted)' }}>Enter Client ID first</span>}
-                </div>
-                <ol className="admin-guide-steps" start={3}>
-                  <li>On the Zoho page, click the <strong>Generate Code</strong> tab. The scope <code>ZohoBooks.fullaccess.all</code> is pre-filled in the URL. Set duration to <strong>10 minutes</strong> and click <strong>Create</strong>.</li>
-                  <li>Copy the code shown, paste it below, and click <strong>Exchange for Token</strong> — no curl needed.</li>
-                </ol>
-                <div className="admin-field" style={{ marginTop: 12 }}>
-                  <label className="label">Redirect URI</label>
-                  <input
-                    type="text"
-                    value={redirectUri}
-                    onChange={(e) => setRedirectUri(e.target.value)}
-                    placeholder="https://www.zoho.com"
-                    autoComplete="off"
-                  />
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                    Must match the redirect URI registered in your Zoho API Console Self Client. Check api-console.zoho.com → your client → Redirect URIs.
-                  </div>
-                </div>
                 <div className="admin-field" style={{ marginTop: 12 }}>
                   <label className="label">Auth Code (from Zoho)</label>
                   <input
