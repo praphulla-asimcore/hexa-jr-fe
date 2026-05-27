@@ -237,24 +237,11 @@ export default function AdminPanel({ onClose }) {
               {error && <div className="error-msg">{error}</div>}
               {success && <div className="success-msg">{success}</div>}
               {testResults && (
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
-                    Endpoint diagnostics (GET /manualjournals per org)
-                  </div>
-                  {Object.entries(testResults).map(([key, val]) => {
-                    const ok = key === 'auth' ? val === 'ok' : (val.status === 200 && val.code === 0);
-                    return (
-                      <div key={key} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 4, fontSize: 12 }}>
-                        <span className={`badge ${ok ? 'badge-success' : 'badge-warning'}`} style={{ minWidth: 28, textAlign: 'center' }}>
-                          {ok ? '✓' : '✗'}
-                        </span>
-                        <span style={{ fontWeight: 600, minWidth: 60 }}>{key}</span>
-                        <span style={{ color: 'var(--text-muted)', wordBreak: 'break-all' }}>
-                          {key === 'auth' ? val : `HTTP ${val.status} — ${val.body ? JSON.stringify(val.body) : val.error || 'ok'}`}
-                        </span>
-                      </div>
-                    );
-                  })}
+                <div style={{ marginBottom: 12, fontSize: 12 }}>
+                  <div style={{ fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>Diagnostics</div>
+                  <pre style={{ background: 'var(--bg-secondary, #f5f5f5)', borderRadius: 6, padding: '10px 12px', fontSize: 11, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: 'var(--text-primary)', maxHeight: 320, overflowY: 'auto' }}>
+                    {JSON.stringify(testResults, null, 2)}
+                  </pre>
                 </div>
               )}
 

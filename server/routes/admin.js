@@ -117,6 +117,24 @@ router.post('/test', requireAdmin, async (req, res) => {
     results._organizations = { error: err.response?.data || err.message };
   }
 
+  // Test first org against multiple endpoints to isolate the issue
+  const firstEntry = Object.entries(orgs)[0];
+  if (firstEntry) {
+    const [firstEntity, firstOrg] = firstEntry;
+    const firstOrgId = firstOrg?.id || firstOrg;
+    for (const endpoint of ['contacts', 'invoices', 'manualjournals', 'chartofaccounts']) {
+      try {
+        const r = await axios.get(
+          `https://www.zohoapis.${tld}/books/v3/${endpoint}`,
+          { headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: firstOrgId, per_page: 1 } }
+        );
+        results[`_test_${endpoint}`] = { http: r.status, code: r.data.code, msg: r.data.message };
+      } catch (err) {
+        results[`_test_${endpoint}`] = { http: err.response?.status, body: err.response?.data };
+      }
+    }
+  }
+
   // Test GET /manualjournals for each org
   for (const [entity, orgEntry] of Object.entries(orgs)) {
     const orgId = orgEntry?.id || orgEntry;
