@@ -6,6 +6,9 @@ const parseRoute = require('./routes/parse');
 const accountsRoute = require('./routes/accounts');
 const postJeRoute = require('./routes/postJe');
 const adminRoute = require('./routes/admin');
+const authRoute = require('./routes/auth');
+const usersRoute = require('./routes/users');
+const journalHistoryRoute = require('./routes/journalHistory');
 
 const app = express();
 
@@ -31,12 +34,15 @@ app.use('/api/parse', parseRoute);
 app.use('/api/accounts', accountsRoute);
 app.use('/api/post-je', postJeRoute);
 app.use('/api/admin', adminRoute);
+app.use('/api/auth', authRoute);
+app.use('/api/users', usersRoute);
+app.use('/api/journal-history', journalHistoryRoute);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
 if (require.main === module) {
   const PORT = process.env.PORT || 3001;
-  app.listen(PORT, () => console.log(`CSI server running on http://localhost:${PORT}`));
+  app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
 }
 
 module.exports = app;

@@ -55,25 +55,29 @@ function zohoError(context, err) {
 async function fetchAccounts(orgId) {
   const token = await getAccessToken();
   const tld = getZohoDomain();
+  const allAccounts = [];
+  let page = 1;
+
   try {
-    const response = await axios.get(
-      `https://www.zohoapis.${tld}/books/v3/chartofaccounts?organization_id=${orgId}`,
-      {
-        headers: { Authorization: `Zoho-oauthtoken ${token}` },
-        params: { per_page: 200 },
+    while (true) {
+      const response = await axios.get(
+        `https://www.zohoapis.${tld}/books/v3/chartofaccounts`,
+        {
+          headers: { Authorization: `Zoho-oauthtoken ${token}` },
+          params: { organization_id: orgId, per_page: 200, page },
+        }
+      );
+      const data = response.data;
+      if (data.code !== 0) throw new Error(`Zoho accounts error [${data.code}]: ${data.message}`);
+
+      for (const a of (data.chartofaccounts || [])) {
+        allAccounts.push({ id: a.account_id, name: a.account_name, type: a.account_type });
       }
-    );
 
-    const data = response.data;
-    if (data.code !== 0) {
-      throw new Error(`Zoho accounts error [${data.code}]: ${data.message}`);
+      if (!data.page_context?.has_more_page) break;
+      page++;
     }
-
-    return (data.chartofaccounts || []).map((a) => ({
-      id: a.account_id,
-      name: a.account_name,
-      type: a.account_type,
-    }));
+    return allAccounts;
   } catch (err) {
     throw zohoError('accounts', err);
   }

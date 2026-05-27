@@ -7,7 +7,7 @@ function fmt(n) {
   return num.toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function EntitySection({ je, posterName, onPostResult }) {
+function EntitySection({ je, posterName, onPostResult, module: mod, authToken }) {
   const [lines, setLines] = useState(je.lineItems);
   const [collapsed, setCollapsed] = useState(false);
   const [posting, setPosting] = useState(false);
@@ -33,6 +33,7 @@ function EntitySection({ je, posterName, onPostResult }) {
         journalDate: je.journalDate,
         referenceNumber: je.referenceNumber,
         notes: posterName ? `${je.notes} | Prepared by: ${posterName}` : je.notes,
+        module: mod || 'csi',
         lineItems: lines.map((l) => ({
           account_id: l.account_id,
           debit_or_credit: l.debit_or_credit,
@@ -40,11 +41,9 @@ function EntitySection({ je, posterName, onPostResult }) {
           description: l.description,
         })),
       };
-      const res = await fetch('/api/post-je', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      const headers = { 'Content-Type': 'application/json' };
+      if (authToken) headers['x-auth-token'] = authToken;
+      const res = await fetch('/api/post-je', { method: 'POST', headers, body: JSON.stringify(payload) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Posting failed.');
       setResult(data);
@@ -174,7 +173,7 @@ function EntitySection({ je, posterName, onPostResult }) {
   );
 }
 
-export default function JeReview({ jeData, paymentDate, onBack, onDone }) {
+export default function JeReview({ jeData, paymentDate, onBack, onDone, module, authToken, user }) {
   const [posterName, setPosterName] = useState('');
   const [postResults, setPostResults] = useState({});
   const [postingAll, setPostingAll] = useState(false);
@@ -222,6 +221,8 @@ export default function JeReview({ jeData, paymentDate, onBack, onDone }) {
             je={je}
             posterName={posterName}
             onPostResult={handlePostResult}
+            module={module}
+            authToken={authToken}
           />
         ))}
       </div>

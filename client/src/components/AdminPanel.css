@@ -213,3 +213,30 @@
 
 .admin-trigger-dot-green { background: var(--success); }
 .admin-trigger-dot-red { background: var(--danger); }
+
+.admin-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  gap: 0;
+}
+
+.admin-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  margin-bottom: -1px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.admin-tab:hover { color: var(--text-primary); }
+
+.admin-tab-active {
+  color: var(--accent, #7c3aed);
+  border-bottom-color: var(--accent, #7c3aed);
+}
