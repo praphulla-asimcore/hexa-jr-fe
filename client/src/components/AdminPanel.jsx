@@ -10,7 +10,7 @@ export default function AdminPanel({ onClose }) {
   const [clientSecret, setClientSecret] = useState('');
   const [refreshToken, setRefreshToken] = useState('');
   const [authCode, setAuthCode] = useState('');
-  const [redirectUri, setRedirectUri] = useState('https://www.zoho.com');
+  const [redirectUri, setRedirectUri] = useState('');
   const [loading, setLoading] = useState(false);
   const [exchanging, setExchanging] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -77,8 +77,10 @@ export default function AdminPanel({ onClose }) {
   function buildAuthUrl() {
     if (!clientId.trim()) return null;
     const scope = 'ZohoBooks.fullaccess.all';
-    const uri = redirectUri.trim() || 'https://www.zoho.com';
-    return `https://accounts.zoho.com/oauth/v2/auth?scope=${encodeURIComponent(scope)}&client_id=${encodeURIComponent(clientId.trim())}&response_type=code&access_type=offline&redirect_uri=${encodeURIComponent(uri)}`;
+    const uri = redirectUri.trim();
+    let url = `https://accounts.zoho.com/oauth/v2/auth?scope=${encodeURIComponent(scope)}&client_id=${encodeURIComponent(clientId.trim())}&response_type=code&access_type=offline`;
+    if (uri) url += `&redirect_uri=${encodeURIComponent(uri)}`;
+    return url;
   }
 
   async function handleExchange() {

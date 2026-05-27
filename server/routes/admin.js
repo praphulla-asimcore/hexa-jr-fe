@@ -145,13 +145,15 @@ router.post('/exchange-code', requireAdmin, async (req, res) => {
   }
 
   const tld = (process.env.ZOHO_DOMAIN || 'com').replace(/^\./, '');
-  const params = new URLSearchParams({
+  const paramObj = {
     grant_type: 'authorization_code',
     client_id: clientId.trim(),
     client_secret: clientSecret.trim(),
-    redirect_uri: (redirectUri || 'https://www.zoho.com').trim(),
     code: code.trim(),
-  });
+  };
+  const uri = (redirectUri || '').trim();
+  if (uri) paramObj.redirect_uri = uri;
+  const params = new URLSearchParams(paramObj);
 
   try {
     const response = await axios.post(
