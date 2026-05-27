@@ -113,4 +113,9 @@ async function postJournalEntry(orgId, payload) {
   }
 }
 
-module.exports = { getAccessToken, fetchAccounts, postJournalEntry };
+function clearTokenCache() {
+  cachedToken = null;
+  tokenExpiry = 0;
+}
+
+module.exports = { getAccessToken, fetchAccounts, postJournalEntry, clearTokenCache };

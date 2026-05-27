@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
-const { getAccessToken } = require('../services/zoho');
+const { getAccessToken, clearTokenCache } = require('../services/zoho');
 const orgs = require('../config/orgs.json');
 
 const router = express.Router();
@@ -78,6 +78,7 @@ router.post('/credentials', requireAdmin, (req, res) => {
   process.env.ZOHO_CLIENT_ID = clientId;
   process.env.ZOHO_CLIENT_SECRET = clientSecret;
   process.env.ZOHO_REFRESH_TOKEN = refreshToken;
+  clearTokenCache();
 
   try {
     fs.writeFileSync(ENV_PATH, content, 'utf8');
@@ -132,6 +133,25 @@ router.post('/test', requireAdmin, async (req, res) => {
       } catch (err) {
         results[`_dc_${domain}`] = { http: err.response?.status, zoho: err.response?.data, err: err.code };
       }
+    }
+  }
+
+  // POST probe: send a minimal payload to confirm POST /manualjournals is reachable
+  // (empty line_items will be rejected with a validation error, NOT code 5 if the URL/auth is fine)
+  if (firstEntry) {
+    const firstOrgId = (firstEntry[1])?.id || firstEntry[1];
+    try {
+      const r = await axios.post(
+        `https://www.zohoapis.${tld}/books/v3/manualjournals`,
+        { journal_date: '2000-01-01', line_items: [] },
+        {
+          headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' },
+          params: { organization_id: firstOrgId },
+        }
+      );
+      results._postProbe = { http: r.status, code: r.data.code, msg: r.data.message };
+    } catch (err) {
+      results._postProbe = { http: err.response?.status, body: err.response?.data, err: err.code };
     }
   }
 
@@ -198,6 +218,7 @@ router.post('/exchange-code', requireAdmin, async (req, res) => {
     process.env.ZOHO_CLIENT_ID = clientId.trim();
     process.env.ZOHO_CLIENT_SECRET = clientSecret.trim();
     process.env.ZOHO_REFRESH_TOKEN = refreshToken;
+    clearTokenCache();
 
     try { fs.writeFileSync(ENV_PATH, content, 'utf8'); } catch { /* read-only on Vercel */ }
 
