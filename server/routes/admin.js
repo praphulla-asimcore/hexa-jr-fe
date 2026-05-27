@@ -122,7 +122,7 @@ router.post('/test', requireAdmin, async (req, res) => {
   const firstEntry = Object.entries(orgs)[0];
   if (firstEntry) {
     const firstOrgId = (firstEntry[1])?.id || firstEntry[1];
-    for (const ep of ['chartofaccounts', 'invoices', 'contacts']) {
+    for (const ep of ['chartofaccounts', 'invoices', 'contacts', 'manualjournals', 'journals', 'journalentries', 'recurringexpenses']) {
       try {
         const r = await axios.get(
           `https://www.zohoapis.${tld}/books/v3/${ep}`,
