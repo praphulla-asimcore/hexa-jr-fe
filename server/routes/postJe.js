@@ -28,7 +28,8 @@ router.post('/', async (req, res) => {
 
   const zohoLineItems = lineItems.map((l) => ({
     account_id: l.account_id,
-    ...(l.debit_or_credit === 'debit' ? { debit_amount: round2(l.amount) } : { credit_amount: round2(l.amount) }),
+    debit_or_credit: l.debit_or_credit,
+    amount: round2(l.amount),
     description: l.description,
   }));
 
