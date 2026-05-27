@@ -24,9 +24,11 @@ router.post('/', async (req, res) => {
     return res.status(422).json({ error: `Debits (${totalDebit.toFixed(2)}) do not equal credits (${totalCredit.toFixed(2)}).` });
   }
 
+  const round2 = (n) => Math.round(parseFloat(n) * 100) / 100;
+
   const zohoLineItems = lineItems.map((l) => ({
     account_id: l.account_id,
-    ...(l.debit_or_credit === 'debit' ? { debit_amount: l.amount } : { credit_amount: l.amount }),
+    ...(l.debit_or_credit === 'debit' ? { debit_amount: round2(l.amount) } : { credit_amount: round2(l.amount) }),
     description: l.description,
   }));
 
