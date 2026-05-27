@@ -91,15 +91,31 @@ router.post('/credentials', requireAdmin, (req, res) => {
 router.post('/test', requireAdmin, async (req, res) => {
   const tld = (process.env.ZOHO_DOMAIN || 'com').replace(/^\./, '');
   const results = {};
+  let token;
   try {
-    await getAccessToken();
-    results.auth = 'ok';
+    token = await getAccessToken();
+    results._auth = 'ok';
   } catch (err) {
     return res.status(502).json({ error: `Auth failed: ${err.message}` });
   }
 
-  // Test manualjournals endpoint for each org
-  const token = await getAccessToken();
+  // List Zoho Books organisations the token can see
+  try {
+    const r = await axios.get(
+      `https://www.zohoapis.${tld}/books/v3/organizations`,
+      { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
+    );
+    const orgList = (r.data.organizations || []).map((o) => ({ id: o.organization_id, name: o.name }));
+    results._organizations = orgList;
+    const knownIds = new Set(Object.values(orgs));
+    results._orgIdCheck = Object.fromEntries(
+      Object.entries(orgs).map(([k, v]) => [k, orgList.some((o) => o.id === v) ? 'found' : 'NOT FOUND'])
+    );
+  } catch (err) {
+    results._organizations = { error: err.response?.data || err.message };
+  }
+
+  // Test GET /manualjournals for each org
   for (const [entity, orgId] of Object.entries(orgs)) {
     try {
       const r = await axios.get(
