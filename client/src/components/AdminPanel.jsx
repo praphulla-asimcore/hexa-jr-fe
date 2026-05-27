@@ -13,6 +13,7 @@ export default function AdminPanel({ onClose }) {
   const [loading, setLoading] = useState(false);
   const [exchanging, setExchanging] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [testResults, setTestResults] = useState(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [configured, setConfigured] = useState(false);
@@ -109,6 +110,7 @@ export default function AdminPanel({ onClose }) {
     setTesting(true);
     setError('');
     setSuccess('');
+    setTestResults(null);
     try {
       const res = await fetch('/api/admin/test', {
         method: 'POST',
@@ -116,7 +118,7 @@ export default function AdminPanel({ onClose }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Test failed.');
-      setSuccess('Zoho connection verified successfully.');
+      setTestResults(data);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -230,6 +232,27 @@ export default function AdminPanel({ onClose }) {
 
               {error && <div className="error-msg">{error}</div>}
               {success && <div className="success-msg">{success}</div>}
+              {testResults && (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                    Endpoint diagnostics (GET /manualjournals per org)
+                  </div>
+                  {Object.entries(testResults).map(([key, val]) => {
+                    const ok = key === 'auth' ? val === 'ok' : (val.status === 200 && val.code === 0);
+                    return (
+                      <div key={key} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 4, fontSize: 12 }}>
+                        <span className={`badge ${ok ? 'badge-success' : 'badge-warning'}`} style={{ minWidth: 28, textAlign: 'center' }}>
+                          {ok ? '✓' : '✗'}
+                        </span>
+                        <span style={{ fontWeight: 600, minWidth: 60 }}>{key}</span>
+                        <span style={{ color: 'var(--text-muted)', wordBreak: 'break-all' }}>
+                          {key === 'auth' ? val : `HTTP ${val.status} — ${val.body ? JSON.stringify(val.body) : val.error || 'ok'}`}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
               <div className="admin-form-actions">
                 <button className="btn btn-secondary" type="button" onClick={handleTest} disabled={testing || !configured}>
