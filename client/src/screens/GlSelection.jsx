@@ -39,8 +39,9 @@ export default function GlSelection({ entities, paymentDate, onBack, onDone }) {
   }, [entities]);
 
   async function loadAccounts(sheetName) {
-    const orgId = orgsConfig[sheetName];
-    if (!orgId || orgId === 'ZOHO_ORG_ID_HERE') {
+    const org = orgsConfig[sheetName];
+    const orgId = org?.id;
+    if (!orgId) {
       setErrorMap((p) => ({ ...p, [sheetName]: 'No Zoho org ID configured for this entity. Update orgsConfig.js.' }));
       return;
     }
@@ -64,8 +65,8 @@ export default function GlSelection({ entities, paymentDate, onBack, onDone }) {
 
   function allSelected() {
     return entities.every((e) => {
-      const orgId = orgsConfig[e.sheetName];
-      if (!orgId || orgId === 'ZOHO_ORG_ID_HERE') return true;
+      const org = orgsConfig[e.sheetName];
+      if (!org?.id) return true;
       const sel = selections[e.sheetName] || {};
       return sel.debitAccountId && sel.creditAccountId;
     });
@@ -75,11 +76,13 @@ export default function GlSelection({ entities, paymentDate, onBack, onDone }) {
     const mon = fmtMonYear(paymentDate);
     const monShort = shortMonYear(paymentDate);
     return entities.map((entity) => {
+      const org = orgsConfig[entity.sheetName];
+      const orgId = org?.id || '';
+      const orgName = org?.name || entity.sheetName;
       const sel = selections[entity.sheetName] || {};
       const accounts = accountsMap[entity.sheetName] || [];
       const debitAccount = accounts.find((a) => a.id === sel.debitAccountId) || { id: sel.debitAccountId, name: 'Consultant Salaries' };
       const creditAccount = accounts.find((a) => a.id === sel.creditAccountId) || { id: sel.creditAccountId, name: creditLabel };
-      const orgId = orgsConfig[entity.sheetName];
 
       const lineItems = [
         {
@@ -102,13 +105,14 @@ export default function GlSelection({ entities, paymentDate, onBack, onDone }) {
 
       return {
         sheetName: entity.sheetName,
-        orgId: orgId || '',
+        orgId,
+        orgName,
         referenceNumber: `HJFE-${entity.sheetName}-${monShort.replace("'", '')}`,
-        notes: `Consultant Salaries ${mon} — ${entity.sheetName}`,
+        notes: `Consultant Salaries ${mon} — ${orgName}`,
         lineItems,
         totalCTC: entity.totalCTC,
         employeeCount: entity.employees.length,
-        hasOrgId: !!(orgId && orgId !== 'ZOHO_ORG_ID_HERE'),
+        hasOrgId: !!orgId,
       };
     });
   }
@@ -129,8 +133,8 @@ export default function GlSelection({ entities, paymentDate, onBack, onDone }) {
 
       <div className="gl-list">
         {entities.map((entity) => {
-          const orgId = orgsConfig[entity.sheetName];
-          const noOrg = !orgId || orgId === 'ZOHO_ORG_ID_HERE';
+          const orgId = orgsConfig[entity.sheetName]?.id;
+          const noOrg = !orgId;
           const accounts = accountsMap[entity.sheetName] || [];
           const loading = loadingMap[entity.sheetName] || false;
           const err = errorMap[entity.sheetName] || '';

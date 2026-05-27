@@ -107,16 +107,19 @@ router.post('/test', requireAdmin, async (req, res) => {
     );
     const orgList = (r.data.organizations || []).map((o) => ({ id: o.organization_id, name: o.name }));
     results._organizations = orgList;
-    const knownIds = new Set(Object.values(orgs));
     results._orgIdCheck = Object.fromEntries(
-      Object.entries(orgs).map(([k, v]) => [k, orgList.some((o) => o.id === v) ? 'found' : 'NOT FOUND'])
+      Object.entries(orgs).map(([k, v]) => {
+        const id = v?.id || v;
+        return [k, orgList.some((o) => o.id === id) ? 'found' : 'NOT FOUND'];
+      })
     );
   } catch (err) {
     results._organizations = { error: err.response?.data || err.message };
   }
 
   // Test GET /manualjournals for each org
-  for (const [entity, orgId] of Object.entries(orgs)) {
+  for (const [entity, orgEntry] of Object.entries(orgs)) {
+    const orgId = orgEntry?.id || orgEntry;
     try {
       const r = await axios.get(
         `https://www.zohoapis.${tld}/books/v3/manualjournals`,

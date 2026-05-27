@@ -11,8 +11,9 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'Missing required fields: sheetName, journalDate, lineItems.' });
   }
 
-  const orgId = orgs[sheetName];
-  if (!orgId || orgId === 'ZOHO_ORG_ID_HERE') {
+  const orgEntry = orgs[sheetName];
+  const orgId = orgEntry?.id;
+  if (!orgId) {
     return res.status(400).json({ error: `No Zoho org ID mapped for entity "${sheetName}". Update server/config/orgs.json.` });
   }
 
