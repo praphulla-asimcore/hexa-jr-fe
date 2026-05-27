@@ -122,7 +122,7 @@ router.post('/test', requireAdmin, async (req, res) => {
   const firstEntry = Object.entries(orgs)[0];
   if (firstEntry) {
     const firstOrgId = (firstEntry[1])?.id || firstEntry[1];
-    for (const ep of ['chartofaccounts', 'invoices', 'contacts', 'manualjournals', 'journals', 'journalentries', 'recurringexpenses']) {
+    for (const ep of ['chartofaccounts', 'journals']) {
       try {
         const r = await axios.get(
           `https://www.zohoapis.${tld}/books/v3/${ep}`,
@@ -135,14 +135,14 @@ router.post('/test', requireAdmin, async (req, res) => {
     }
   }
 
-  // Test first org: manualjournals across all Zoho data centers
+  // Test first org: journals across all Zoho data centers
   if (firstEntry) {
     const [firstEntity, firstOrg] = firstEntry;
     const firstOrgId = firstOrg?.id || firstOrg;
     for (const domain of ['com', 'in', 'com.au', 'eu', 'jp', 'ca']) {
       try {
         const r = await axios.get(
-          `https://www.zohoapis.${domain}/books/v3/manualjournals`,
+          `https://www.zohoapis.${domain}/books/v3/journals`,
           { headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: firstOrgId, per_page: 1 }, timeout: 8000 }
         );
         results[`_dc_${domain}`] = { http: r.status, code: r.data.code, msg: r.data.message };
@@ -152,13 +152,13 @@ router.post('/test', requireAdmin, async (req, res) => {
     }
   }
 
-  // POST probe: send a minimal payload to confirm POST /manualjournals is reachable
+  // POST probe: send a minimal payload to confirm POST /journals is reachable
   // (empty line_items will be rejected with a validation error, NOT code 5 if the URL/auth is fine)
   if (firstEntry) {
     const firstOrgId = (firstEntry[1])?.id || firstEntry[1];
     try {
       const r = await axios.post(
-        `https://www.zohoapis.${tld}/books/v3/manualjournals`,
+        `https://www.zohoapis.${tld}/books/v3/journals`,
         { journal_date: '2000-01-01', line_items: [] },
         {
           headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' },
@@ -171,12 +171,12 @@ router.post('/test', requireAdmin, async (req, res) => {
     }
   }
 
-  // Test GET /manualjournals for each org
+  // Test GET /journals for each org
   for (const [entity, orgEntry] of Object.entries(orgs)) {
     const orgId = orgEntry?.id || orgEntry;
     try {
       const r = await axios.get(
-        `https://www.zohoapis.${tld}/books/v3/manualjournals`,
+        `https://www.zohoapis.${tld}/books/v3/journals`,
         {
           headers: { Authorization: `Zoho-oauthtoken ${token}` },
           params: { organization_id: orgId, per_page: 1 },

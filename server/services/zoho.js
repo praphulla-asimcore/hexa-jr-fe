@@ -82,7 +82,7 @@ async function fetchAccounts(orgId) {
 async function postJournalEntry(orgId, payload) {
   const token = await getAccessToken();
   const tld = getZohoDomain();
-  const url = `https://www.zohoapis.${tld}/books/v3/manualjournals`;
+  const url = `https://www.zohoapis.${tld}/books/v3/journals`;
   console.log('[Zoho POST]', url, 'org:', orgId);
   console.log('[Zoho payload]', JSON.stringify(payload));
   try {
