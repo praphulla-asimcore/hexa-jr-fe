@@ -118,8 +118,24 @@ router.post('/test', requireAdmin, async (req, res) => {
     results._organizations = { error: err.response?.data || err.message };
   }
 
-  // Test first org: manualjournals across all Zoho data centers
+  // Scope probe: test chartofaccounts and invoices to see what the token can actually access
   const firstEntry = Object.entries(orgs)[0];
+  if (firstEntry) {
+    const firstOrgId = (firstEntry[1])?.id || firstEntry[1];
+    for (const ep of ['chartofaccounts', 'invoices', 'contacts']) {
+      try {
+        const r = await axios.get(
+          `https://www.zohoapis.${tld}/books/v3/${ep}`,
+          { headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: firstOrgId, per_page: 1 }, timeout: 8000 }
+        );
+        results[`_scope_${ep}`] = { http: r.status, code: r.data.code };
+      } catch (err) {
+        results[`_scope_${ep}`] = { http: err.response?.status, code: err.response?.data?.code, msg: err.response?.data?.message };
+      }
+    }
+  }
+
+  // Test first org: manualjournals across all Zoho data centers
   if (firstEntry) {
     const [firstEntity, firstOrg] = firstEntry;
     const firstOrgId = firstOrg?.id || firstOrg;
