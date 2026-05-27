@@ -10,6 +10,7 @@ export default function AdminPanel({ onClose }) {
   const [clientSecret, setClientSecret] = useState('');
   const [refreshToken, setRefreshToken] = useState('');
   const [authCode, setAuthCode] = useState('');
+  const [redirectUri, setRedirectUri] = useState('https://www.zoho.com');
   const [loading, setLoading] = useState(false);
   const [exchanging, setExchanging] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -76,7 +77,8 @@ export default function AdminPanel({ onClose }) {
   function buildAuthUrl() {
     if (!clientId.trim()) return null;
     const scope = 'ZohoBooks.fullaccess.all';
-    return `https://accounts.zoho.com/oauth/v2/auth?scope=${encodeURIComponent(scope)}&client_id=${encodeURIComponent(clientId.trim())}&response_type=code&access_type=offline&redirect_uri=${encodeURIComponent('https://www.zoho.com')}`;
+    const uri = redirectUri.trim() || 'https://www.zoho.com';
+    return `https://accounts.zoho.com/oauth/v2/auth?scope=${encodeURIComponent(scope)}&client_id=${encodeURIComponent(clientId.trim())}&response_type=code&access_type=offline&redirect_uri=${encodeURIComponent(uri)}`;
   }
 
   async function handleExchange() {
@@ -91,7 +93,7 @@ export default function AdminPanel({ onClose }) {
       const res = await fetch('/api/admin/exchange-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
-        body: JSON.stringify({ clientId: clientId.trim(), clientSecret: clientSecret.trim(), code: authCode.trim() }),
+        body: JSON.stringify({ clientId: clientId.trim(), clientSecret: clientSecret.trim(), code: authCode.trim(), redirectUri: redirectUri.trim() || 'https://www.zoho.com' }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Exchange failed.');
@@ -287,6 +289,19 @@ export default function AdminPanel({ onClose }) {
                   <li>On the Zoho page, click the <strong>Generate Code</strong> tab. The scope <code>ZohoBooks.fullaccess.all</code> is pre-filled in the URL. Set duration to <strong>10 minutes</strong> and click <strong>Create</strong>.</li>
                   <li>Copy the code shown, paste it below, and click <strong>Exchange for Token</strong> — no curl needed.</li>
                 </ol>
+                <div className="admin-field" style={{ marginTop: 12 }}>
+                  <label className="label">Redirect URI</label>
+                  <input
+                    type="text"
+                    value={redirectUri}
+                    onChange={(e) => setRedirectUri(e.target.value)}
+                    placeholder="https://www.zoho.com"
+                    autoComplete="off"
+                  />
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                    Must match the redirect URI registered in your Zoho API Console Self Client. Check api-console.zoho.com → your client → Redirect URIs.
+                  </div>
+                </div>
                 <div className="admin-field" style={{ marginTop: 12 }}>
                   <label className="label">Auth Code (from Zoho)</label>
                   <input

@@ -139,7 +139,7 @@ router.post('/test', requireAdmin, async (req, res) => {
 });
 
 router.post('/exchange-code', requireAdmin, async (req, res) => {
-  const { clientId, clientSecret, code } = req.body || {};
+  const { clientId, clientSecret, code, redirectUri } = req.body || {};
   if (!clientId || !clientSecret || !code) {
     return res.status(400).json({ error: 'clientId, clientSecret and code are all required.' });
   }
@@ -149,7 +149,7 @@ router.post('/exchange-code', requireAdmin, async (req, res) => {
     grant_type: 'authorization_code',
     client_id: clientId.trim(),
     client_secret: clientSecret.trim(),
-    redirect_uri: 'https://www.zoho.com',
+    redirect_uri: (redirectUri || 'https://www.zoho.com').trim(),
     code: code.trim(),
   });
 
