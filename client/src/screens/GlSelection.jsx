@@ -178,7 +178,7 @@ export default function GlSelection({ entities, paymentDate, onBack, onDone }) {
                         {accounts.length === 0 ? '— load accounts first —' : '— select debit account —'}
                       </option>
                       {accounts.map((a) => (
-                        <option key={a.id} value={a.id}>{a.name}</option>
+                        <option key={a.id} value={a.id}>{a.type} — {a.name}</option>
                       ))}
                     </select>
                   </div>
@@ -193,7 +193,7 @@ export default function GlSelection({ entities, paymentDate, onBack, onDone }) {
                         {accounts.length === 0 ? '— load accounts first —' : '— select credit account —'}
                       </option>
                       {accounts.map((a) => (
-                        <option key={a.id} value={a.id}>{a.name}</option>
+                        <option key={a.id} value={a.id}>{a.type} — {a.name}</option>
                       ))}
                     </select>
                   </div>
