@@ -117,20 +117,20 @@ router.post('/test', requireAdmin, async (req, res) => {
     results._organizations = { error: err.response?.data || err.message };
   }
 
-  // Test first org against multiple endpoints to isolate the issue
+  // Test first org: manualjournals across all Zoho data centers
   const firstEntry = Object.entries(orgs)[0];
   if (firstEntry) {
     const [firstEntity, firstOrg] = firstEntry;
     const firstOrgId = firstOrg?.id || firstOrg;
-    for (const endpoint of ['contacts', 'invoices', 'manualjournals', 'chartofaccounts']) {
+    for (const domain of ['com', 'in', 'com.au', 'eu', 'jp', 'ca']) {
       try {
         const r = await axios.get(
-          `https://www.zohoapis.${tld}/books/v3/${endpoint}`,
-          { headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: firstOrgId, per_page: 1 } }
+          `https://www.zohoapis.${domain}/books/v3/manualjournals`,
+          { headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: firstOrgId, per_page: 1 }, timeout: 8000 }
         );
-        results[`_test_${endpoint}`] = { http: r.status, code: r.data.code, msg: r.data.message };
+        results[`_dc_${domain}`] = { http: r.status, code: r.data.code, msg: r.data.message };
       } catch (err) {
-        results[`_test_${endpoint}`] = { http: err.response?.status, body: err.response?.data };
+        results[`_dc_${domain}`] = { http: err.response?.status, zoho: err.response?.data, err: err.code };
       }
     }
   }
