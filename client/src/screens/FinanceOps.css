@@ -1,0 +1,242 @@
+.finops-screen {
+  display: flex;
+  flex-direction: column;
+}
+
+.finops-card {
+  padding: 28px;
+  margin-bottom: 0;
+}
+
+.finops-section-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 6px;
+}
+
+.finops-hint {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0 0 20px;
+  line-height: 1.6;
+}
+
+.finops-field {
+  margin-bottom: 16px;
+}
+
+/* Drop zone */
+.finops-dropzone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 40px 24px;
+  text-align: center;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  transition: border-color var(--transition), background var(--transition);
+}
+
+.finops-dropzone:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.finops-dropzone svg { opacity: 0.5; }
+.finops-dropzone:hover svg { opacity: 1; }
+.finops-dropzone-sub { font-size: 12px; color: var(--text-muted); }
+
+/* PIR header bar */
+.finops-pir-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.finops-pir-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.finops-pir-sub {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.finops-pir-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Tables */
+.finops-table-wrap {
+  overflow-x: auto;
+  padding: 0;
+}
+
+.finops-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.finops-table th {
+  background: var(--bg-secondary);
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+
+.finops-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  vertical-align: middle;
+}
+
+.finops-table tr:last-child td { border-bottom: none; }
+.finops-table tr:hover td { background: var(--bg-secondary); }
+
+.finops-table-sm td,
+.finops-table-sm th { padding: 7px 10px; }
+
+.finops-desc {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.finops-subtotal td {
+  background: var(--bg-secondary) !important;
+  font-size: 13px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.finops-grandtotal td {
+  background: var(--accent-soft) !important;
+  font-size: 13px;
+  padding: 10px 12px;
+  border-top: 2px solid var(--accent);
+  color: var(--accent);
+}
+
+/* Approval summary */
+.finops-summary-row {
+  display: grid;
+  grid-template-columns: auto auto auto auto auto auto;
+  gap: 4px 24px;
+  align-items: center;
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 20px;
+}
+
+.finops-summary-row strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.finops-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 20px 0;
+}
+
+.finops-status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+/* Beneficiary master */
+.finops-bene-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.finops-match-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.finops-row-unmatched td {
+  opacity: 0.5;
+}
+
+/* Generate actions */
+.finops-generate-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.finops-generate-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+/* Print styles */
+@media print {
+  .screen-header,
+  .flow-steps,
+  .finops-pir-header,
+  .finops-pir-actions,
+  .screen-actions,
+  .sidebar,
+  .btn {
+    display: none !important;
+  }
+
+  .pir-print-area {
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+  }
+
+  .pir-print-area::before {
+    content: 'MY_PIR Summary';
+    display: block;
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+
+  .finops-table {
+    font-size: 10px;
+  }
+
+  .finops-table th,
+  .finops-table td {
+    padding: 5px 8px;
+  }
+}

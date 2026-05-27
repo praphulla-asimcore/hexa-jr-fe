@@ -31,3 +31,24 @@ CREATE TABLE IF NOT EXISTS journal_posts (
 CREATE INDEX IF NOT EXISTS journal_posts_entity_idx ON journal_posts (entity);
 CREATE INDEX IF NOT EXISTS journal_posts_posted_at_idx ON journal_posts (posted_at DESC);
 CREATE INDEX IF NOT EXISTS journal_posts_module_idx ON journal_posts (module);
+
+CREATE TABLE IF NOT EXISTS pir_approvals (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  payout_date      DATE NOT NULL,
+  total_amount     NUMERIC,
+  pir_data         JSONB NOT NULL,
+  approval_status  TEXT NOT NULL DEFAULT 'pending',  -- pending|approved|rejected
+  reviewer_email   TEXT,
+  approver_email   TEXT,
+  email_sent_at    TIMESTAMPTZ,
+  approved_at      TIMESTAMPTZ,
+  approved_by      TEXT,
+  rejection_reason TEXT,
+  approval_token   TEXT UNIQUE,
+  created_by_email TEXT NOT NULL,
+  created_by_name  TEXT NOT NULL,
+  created_at       TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS pir_approvals_status_idx ON pir_approvals (approval_status);
+CREATE INDEX IF NOT EXISTS pir_approvals_created_at_idx ON pir_approvals (created_at DESC);

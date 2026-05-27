@@ -8,6 +8,7 @@ import Upload from './screens/Upload.jsx';
 import GlSelection from './screens/GlSelection.jsx';
 import JeReview from './screens/JeReview.jsx';
 import Summary from './screens/Summary.jsx';
+import FinanceOps from './screens/FinanceOps.jsx';
 import './App.css';
 import './components/AdminPanel.css';
 import './components/Sidebar.css';
@@ -129,6 +130,7 @@ export default function App() {
         {section === 'dashboard' && <Dashboard />}
         {section === 'csi' && <JournalFlow module="csi" user={user} authToken={authToken} />}
         {section === 'payroll' && <JournalFlow module="payroll" user={user} authToken={authToken} />}
+        {section === 'finops' && <FinanceOps authToken={authToken} user={user} />}
       </main>
       {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} adminToken={authToken} />}
     </div>
