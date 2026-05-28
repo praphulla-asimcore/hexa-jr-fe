@@ -668,45 +668,72 @@ function Step4Panel({ kase, authToken, onRefresh }) {
       if (!r.ok) { const d = await r.json(); throw new Error(d.error); }
       const blob = await r.blob();
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = `BANKFILE-${kase.reference}.xlsx`; a.click();
+      const a = document.createElement('a'); a.href = url;
+      a.download = kase.bank_file_name || `RCMS_BankUpload_${kase.reference}.xlsx`; a.click();
       URL.revokeObjectURL(url);
       await onRefresh();
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }
 
-  async function redownload() {
+  function redownloadXlsx() {
     if (!kase.bank_file_data) return;
     const bin = atob(kase.bank_file_data);
     const arr = new Uint8Array(bin.length).map((_, i) => bin.charCodeAt(i));
     const blob = new Blob([arr], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = kase.bank_file_name || `BANKFILE-${kase.reference}.xlsx`; a.click(); URL.revokeObjectURL(url);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = kase.bank_file_name; a.click(); URL.revokeObjectURL(url);
+  }
+
+  async function downloadTxt() {
+    const r = await fetch(`/api/payroll-cases/${kase.id}/bank-file-txt`, { headers: { 'x-auth-token': authToken } });
+    if (!r.ok) return;
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const cd = r.headers.get('content-disposition') || '';
+    const name = cd.match(/filename="([^"]+)"/)?.[1] || `RCgen_${kase.reference}.txt`;
+    const a = document.createElement('a'); a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url);
   }
 
   return (
     <div className="pf-panel-body">
-      <PanelHeader step={4} title="Bulk Bank Upload File Generation" subtitle="Generated only after Approval Certificate. File is locked after generation." />
+      <PanelHeader step={4} title="Bulk Bank Upload File Generation"
+        subtitle="Generates RCMS XLSX + RCgen TXT. Both locked after generation. SHA-256 hashes recorded." />
       {canGenerate && (
         <div className="pf-action-zone">
-          <p className="pf-action-desc">Generate the bank upload file. File hash (SHA-256) will be recorded — any tampering before bank upload is detectable.</p>
+          <p className="pf-action-desc">
+            Generates two files from Airtable-matched consultant bank data:
+            <br/>• <strong>RCMS XLSX</strong> — RCMS bank upload report format
+            <br/>• <strong>RCgen TXT</strong> — RCgen pipe-delimited payment file
+          </p>
           {error && <div className="error-msg">{error}</div>}
           <button className="btn btn-primary" onClick={generate} disabled={loading}>
-            {loading ? <><span className="spinner"/>&nbsp;Generating…</> : 'Generate & Download Bank File'}
+            {loading ? <><span className="spinner"/>&nbsp;Generating…</> : 'Generate Bank Files'}
           </button>
         </div>
       )}
       {isDone && (
         <>
-          <div className="pf-info-banner pf-banner-ok">Bank file generated and locked.</div>
+          <div className="pf-info-banner pf-banner-ok">Both bank files generated and locked.</div>
           <div className="pf-info-grid">
-            <StampBox label="File name" value={kase.bank_file_name || '—'} />
-            <StampBox label="SHA-256" value={kase.bank_file_hash ? kase.bank_file_hash.slice(0, 24) + '…' : '—'} />
+            <StampBox label="RCMS XLSX" value={kase.bank_file_name || '—'} />
+            <StampBox label="XLSX SHA-256" value={kase.bank_file_hash ? kase.bank_file_hash.slice(0, 24) + '…' : '—'} />
+            <StampBox label="RCgen TXT" value={kase.bank_receipt_name || '—'} />
             <StampBox label="Generated at" value={fmtDate(kase.bank_file_generated_at)} />
-            <StampBox label="Triggered by" value={kase.bank_file_triggered_by || '—'} />
+            <StampBox label="Triggered by" value={`${kase.bank_file_triggered_by} approval`} />
           </div>
-          {kase.bank_file_data && (
-            <button className="btn btn-secondary" style={{ marginTop: 12 }} onClick={redownload}>Re-download Bank File</button>
-          )}
+          <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+            {kase.bank_file_data && (
+              <button className="btn btn-secondary" onClick={redownloadXlsx}>
+                ⬇ RCMS Bank Upload (XLSX)
+              </button>
+            )}
+            {kase.bank_receipt_name && (
+              <button className="btn btn-secondary" onClick={downloadTxt}>
+                ⬇ RCgen Payment File (TXT)
+              </button>
+            )}
+          </div>
         </>
       )}
     </div>
@@ -717,8 +744,11 @@ function Step4Panel({ kase, authToken, onRefresh }) {
 function Step5Panel({ kase, authToken, onRefresh }) {
   const [ref, setRef] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingApproval, setLoadingApproval] = useState(false);
   const [error, setError] = useState('');
   const canLog = kase.status === 'bank_file_generated';
+  const canRequestApproval = kase.status === 'bank_uploaded';
+  const isDone = ['payment_approval_sent','payment_approved','payment_rejected','zoho_posted'].includes(kase.status);
 
   async function logUpload() {
     if (!ref.trim()) return setError('Bank portal reference number is required.');
@@ -735,90 +765,147 @@ function Step5Panel({ kase, authToken, onRefresh }) {
     finally { setLoading(false); }
   }
 
+  async function sendPaymentApproval() {
+    setLoadingApproval(true); setError('');
+    try {
+      const r = await fetch(`/api/payroll-cases/${kase.id}/send-payment-approval`, {
+        method: 'POST', headers: { 'x-auth-token': authToken },
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      await onRefresh();
+    } catch (e) { setError(e.message); }
+    finally { setLoadingApproval(false); }
+  }
+
   return (
     <div className="pf-panel-body">
-      <PanelHeader step={5} title="FE Manual Bank Upload" subtitle="Log the bank portal reference after uploading the file to the bank." />
+      <PanelHeader step={5} title="FE Manual Bank Upload"
+        subtitle="Log the bank portal reference, then send for payment approval." />
 
-      {canLog && (
-        <div className="pf-action-zone">
-          <label className="label">Bank Portal Reference Number</label>
-          <input className="input" value={ref} onChange={e => setRef(e.target.value)} placeholder="e.g. TXN-2026050001" style={{ marginBottom: 10 }} />
-          {error && <div className="error-msg">{error}</div>}
-          <button className="btn btn-primary" onClick={logUpload} disabled={loading}>
-            {loading ? <><span className="spinner"/>&nbsp;Logging…</> : 'Log Bank Upload'}
-          </button>
+      {/* Step A: Log bank upload */}
+      <div className="pf-sub-step">
+        <div className={`pf-sub-step-header ${kase.bank_upload_at ? 'done' : ''}`}>
+          <div className="pf-sub-step-num">{kase.bank_upload_at ? '✓' : 'A'}</div>
+          <div>Log Bank Upload</div>
         </div>
-      )}
+        {canLog && (
+          <div className="pf-sub-step-body">
+            <label className="label">Bank Portal Reference Number</label>
+            <input className="input" value={ref} onChange={e => setRef(e.target.value)}
+              placeholder="e.g. TXN-2026050001" style={{ marginBottom: 10 }} />
+            {error && <div className="error-msg">{error}</div>}
+            <button className="btn btn-primary" onClick={logUpload} disabled={loading}>
+              {loading ? <><span className="spinner"/>&nbsp;Logging…</> : 'Log Bank Upload'}
+            </button>
+          </div>
+        )}
+        {kase.bank_upload_at && (
+          <div className="pf-sub-step-done">
+            <StampBox label="Uploaded by" value={kase.bank_upload_by} />
+            <StampBox label="Bank Portal Ref" value={kase.bank_portal_ref} />
+            <StampBox label="Date-Time" value={fmtDate(kase.bank_upload_at)} />
+          </div>
+        )}
+      </div>
 
-      {kase.bank_upload_at && (
-        <div className="pf-info-banner pf-banner-ok" style={{ marginBottom: 16 }}>Bank upload logged.</div>
-      )}
-
-      {kase.bank_upload_at && (
-        <div className="pf-info-grid">
-          <StampBox label="Uploaded by" value={kase.bank_upload_by} />
-          <StampBox label="Bank Portal Ref" value={kase.bank_portal_ref} />
-          <StampBox label="Date-Time" value={fmtDate(kase.bank_upload_at)} />
+      {/* Step B: Send for director approval */}
+      <div className="pf-sub-step">
+        <div className={`pf-sub-step-header ${isDone ? 'done' : ''}`}>
+          <div className="pf-sub-step-num">{isDone ? '✓' : 'B'}</div>
+          <div>Payment Ready for Approval</div>
         </div>
-      )}
+        {canRequestApproval && (
+          <div className="pf-sub-step-body">
+            <p className="pf-action-desc">
+              Bank file has been uploaded. Send the payment approval request to the Director
+              (Dato Thiruchelvapalan) with the full payroll summary.
+            </p>
+            {error && <div className="error-msg">{error}</div>}
+            <button className="btn btn-primary" onClick={sendPaymentApproval} disabled={loadingApproval}>
+              {loadingApproval
+                ? <><span className="spinner"/>&nbsp;Sending…</>
+                : 'Payment Ready for Approval →'}
+            </button>
+          </div>
+        )}
+        {isDone && (
+          <div className="pf-sub-step-done">
+            <StampBox label="Approval sent to" value="Dato Thiruchelvapalan" />
+            <StampBox label="Sent at" value={fmtDate(kase.payment_approval_sent_at)} />
+          </div>
+        )}
+        {!kase.bank_upload_at && <div className="pf-sub-step-locked">Complete Step A first.</div>}
+      </div>
     </div>
   );
 }
 
 // Step 6 — Director Payment Approval
 function Step6Panel({ kase, authToken, onRefresh }) {
-  const [loading, setLoading] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
-  const canSend = kase.status === 'bank_uploaded' && !!kase.bank_receipt_attached_at;
   const isApproved = ['payment_approved','zoho_posted'].includes(kase.status);
   const isRejected = kase.status === 'payment_rejected';
   const isPending = kase.status === 'payment_approval_sent';
+  const canConfirmManually = ['payment_approval_sent','bank_uploaded'].includes(kase.status);
 
-  async function sendApproval() {
-    setLoading(true); setError('');
+  async function confirmPayment() {
+    setConfirming(true); setError('');
     try {
-      const r = await fetch(`/api/payroll-cases/${kase.id}/send-payment-approval`, { method: 'POST', headers: { 'x-auth-token': authToken } });
+      const r = await fetch(`/api/payroll-cases/${kase.id}/confirm-payment`, {
+        method: 'POST', headers: { 'x-auth-token': authToken },
+      });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error);
       await onRefresh();
     } catch (e) { setError(e.message); }
-    finally { setLoading(false); }
+    finally { setConfirming(false); }
   }
 
   return (
     <div className="pf-panel-body">
-      <PanelHeader step={6} title="Payment Approval (Director)" subtitle="Director approval required before Zoho posting." />
+      <PanelHeader step={6} title="Payment Approval (Director)"
+        subtitle="Director approval via email link or in-app confirmation." />
+
       <div className="pf-approver-chain">
         <ApproverBox name="Dato Thiruchelvapalan" role="Director"
           status={isApproved ? 'approved' : isRejected ? 'rejected' : isPending ? 'pending' : 'waiting'}
           timestamp={kase.payment_approved_at} />
       </div>
 
-      {canSend && (
-        <div className="pf-action-zone">
-          <p className="pf-action-desc">Send payment approval request to the Director with payroll summary, consultant count, gross amount, and bank reference.</p>
-          {error && <div className="error-msg">{error}</div>}
-          <button className="btn btn-primary" onClick={sendApproval} disabled={loading}>
-            {loading ? <><span className="spinner"/>&nbsp;Sending…</> : 'Send Payment Approval to Director'}
-          </button>
-        </div>
-      )}
-
       {isPending && (
         <div className="pf-info-banner pf-banner-waiting">
-          Payment approval email sent to Dato Thiruchelvapalan {fmtDate(kase.payment_approval_sent_at)}.
+          Approval email sent to Dato Thiruchelvapalan on {fmtDate(kase.payment_approval_sent_at)}.
+          Director can approve via the secure email link, or you can confirm below if approved verbally.
           <button className="btn btn-secondary btn-sm" style={{ marginLeft: 12 }} onClick={onRefresh}>Refresh</button>
         </div>
       )}
 
-      {isRejected && <div className="pf-info-banner pf-banner-danger">Payment rejected: {kase.payment_rejection_reason}</div>}
+      {canConfirmManually && (
+        <div className="pf-action-zone" style={{ marginTop: 12 }}>
+          <p className="pf-action-desc">
+            If the Director has confirmed payment approval verbally or through another channel,
+            confirm it here to proceed to Zoho posting.
+          </p>
+          {error && <div className="error-msg">{error}</div>}
+          <button className="btn btn-primary" onClick={confirmPayment} disabled={confirming}>
+            {confirming ? <><span className="spinner"/>&nbsp;Confirming…</> : 'Payment Approved in Bank ✓'}
+          </button>
+        </div>
+      )}
+
+      {isRejected && (
+        <div className="pf-info-banner pf-banner-danger">Payment rejected: {kase.payment_rejection_reason}</div>
+      )}
 
       {isApproved && kase.payment_approval_cert && (
         <div className="pf-cert-box">
-          <div className="pf-cert-title">Payment Approval Certificate Issued</div>
+          <div className="pf-cert-title">Payment Approval Certificate</div>
           <StampBox label="Approved by" value={kase.payment_approval_cert.approvedBy} />
           <StampBox label="Amount" value={kase.payment_approval_cert.amount} />
-          <StampBox label="Bank Portal Ref" value={kase.payment_approval_cert.bankPortalRef} />
+          <StampBox label="Bank Portal Ref" value={kase.payment_approval_cert.bankPortalRef || '—'} />
+          <StampBox label="Confirmed via" value={kase.payment_approval_cert.confirmedVia || 'email link'} />
           <StampBox label="Date-Time" value={fmtDate(kase.payment_approval_cert.timestamp)} />
         </div>
       )}
@@ -833,6 +920,8 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [debitAccount, setDebitAccount] = useState('');
   const [creditAccount, setCreditAccount] = useState('');
+  const [expenseAccount, setExpenseAccount] = useState('');
+  const [bankAccount, setBankAccount] = useState('');
   const [journalDate, setJournalDate] = useState('');
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState('');
@@ -897,7 +986,11 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
       const r = await fetch(`/api/payroll-cases/${kase.id}/post-zoho`, {
         method: 'POST',
         headers: { 'x-auth-token': authToken, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orgId, journalDate, sheetName, lineItems }),
+        body: JSON.stringify({
+          orgId, journalDate, sheetName, lineItems,
+          expenseAccountId: expenseAccount || undefined,
+          bankAccountId: bankAccount || undefined,
+        }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error);
@@ -962,6 +1055,31 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
                   <option value="">— select —</option>
                   {accounts.map(a => <option key={a.id} value={a.id}>{a.type} — {a.name}</option>)}
                 </select>
+              </div>
+            </div>
+          )}
+
+          {accounts.length > 0 && (
+            <div style={{ marginTop: 20, padding: '14px 16px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8 }}>
+              <div className="pf-detail-card-title" style={{ marginBottom: 12 }}>
+                Zoho Expense — Bank Payment Entry
+                <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>(optional — books DR Salary Payable / CR Bank)</span>
+              </div>
+              <div className="pf-gl-form">
+                <div className="pf-form-section">
+                  <label className="label">Expense / Payable Account (DR)</label>
+                  <select className="input" value={expenseAccount} onChange={e => setExpenseAccount(e.target.value)}>
+                    <option value="">— skip expense entry —</option>
+                    {accounts.map(a => <option key={a.id} value={a.id}>{a.type} — {a.name}</option>)}
+                  </select>
+                </div>
+                <div className="pf-form-section">
+                  <label className="label">Bank / Cash Account (CR)</label>
+                  <select className="input" value={bankAccount} onChange={e => setBankAccount(e.target.value)}>
+                    <option value="">— skip expense entry —</option>
+                    {accounts.map(a => <option key={a.id} value={a.id}>{a.type} — {a.name}</option>)}
+                  </select>
+                </div>
               </div>
             </div>
           )}

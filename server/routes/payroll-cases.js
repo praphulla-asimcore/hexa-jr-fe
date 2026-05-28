@@ -6,7 +6,7 @@ const XLSX = require('xlsx');
 const { Resend } = require('resend');
 const { getDb } = require('../services/db');
 const { parseExcelBuffer } = require('../services/parser');
-const { postJournalEntry } = require('../services/zoho');
+const { postJournalEntry, createExpense } = require('../services/zoho');
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'hexa-jwt-secret-change-in-prod';
@@ -65,6 +65,80 @@ function getIp(req) {
 
 function round2(n) { return Math.round(parseFloat(n) * 100) / 100; }
 
+// Malaysian bank name → SWIFT/bank code lookup
+const MY_BANK_CODES = {
+  maybank: 'MBBEMYKL', 'maybank islamic': 'MBBEMYKL',
+  'public bank': 'PBBEMYKL', 'public bank berhad': 'PBBEMYKL',
+  'cimb': 'CIBBMYKL', 'cimb bank': 'CIBBMYKL',
+  'rhb': 'RHBBMYKL', 'rhb bank': 'RHBBMYKL',
+  'hong leong': 'HLBBMYKL', 'hong leong bank': 'HLBBMYKL',
+  'ambank': 'ARBKMYKL',
+  'bank islam': 'BIMBMYKL', 'bank islam malaysia berhad': 'BIMBMYKL',
+  'bank muamalat': 'BMMBMYKL',
+  'hsbc': 'HBMBMYKL', 'hsbc bank': 'HBMBMYKL',
+  'ocbc': 'OCBCMYKL',
+  'standard chartered': 'SCBLMYKL',
+  'affin': 'PHBMMYKL', 'affin bank': 'PHBMMYKL',
+  'alliance bank': 'MFBBMYKL',
+  'bank rakyat': 'BKRMMYKL',
+  'bsn': 'BSNAMYK1',
+};
+
+function bankNameToCode(name) {
+  if (!name) return '';
+  return MY_BANK_CODES[name.trim().toLowerCase()] || '';
+}
+
+async function fetchAirtableConsultants() {
+  const apiKey = process.env.AIRTABLE_API_KEY;
+  const baseId = process.env.AIRTABLE_BASE_ID;
+  const tableName = process.env.AIRTABLE_TABLE_NAME;
+  if (!apiKey || !baseId || !tableName) return [];
+
+  const records = [];
+  let offset = null;
+  do {
+    const url = new URL(`https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}`);
+    url.searchParams.set('pageSize', '100');
+    url.searchParams.set('cellFormat', 'string');
+    url.searchParams.set('timeZone', 'Asia/Kuala_Lumpur');
+    url.searchParams.set('userLocale', 'en-MY');
+    if (offset) url.searchParams.set('offset', offset);
+
+    const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${apiKey}` } });
+    if (!res.ok) break;
+    const data = await res.json();
+    for (const r of (data.records || [])) {
+      const f = r.fields;
+      records.push({
+        employeeNumber: String(f['Employee Number'] || '').trim(),
+        employeeId: String(f['Employee ID'] || '').trim(),
+        name: String(f['Full Legal Name'] || '').trim(),
+        bankName: String(f['Bank Name'] || '').trim(),
+        accountNo: String(f['Bank Account Number'] || '').trim(),
+        idNumber: String(f['ID Number'] || '').trim(),
+      });
+    }
+    offset = data.offset || null;
+  } while (offset);
+
+  return records;
+}
+
+function matchConsultant(emp, airtableList) {
+  // Try exact employee number match first
+  const byNum = airtableList.find(a => a.employeeNumber === emp.employeeId || a.employeeId === emp.employeeId);
+  if (byNum) return byNum;
+  // Fallback: name contains match (case-insensitive)
+  const empNameLower = emp.name.toLowerCase();
+  return airtableList.find(a => {
+    const aLower = a.name.toLowerCase();
+    return aLower === empNameLower || aLower.includes(empNameLower) || empNameLower.includes(aLower);
+  }) || null;
+}
+
+function pad(n) { return String(n).padStart(2, '0'); }
+
 async function auditLog(db, caseId, eventType, by, userId, ip, meta) {
   try {
     await db.from('payroll_audit_log').insert({
@@ -122,29 +196,93 @@ function fmtRM(n) { return `RM ${Number(n).toLocaleString('en-MY', { minimumFrac
 
 function tableRow(k, v) { return `<tr><td style="padding:6px 0;color:#888;width:170px">${k}</td><td style="color:#111;font-weight:600">${v}</td></tr>`; }
 
-async function emailCheckApproval(resend, { to, name, role, kase, approveUrl, rejectUrl, check }) {
+async function emailCheckApproval(resend, { to, name, role, kase, approveUrl, rejectUrl, check, entities }) {
   if (!resend) return;
   const label = kase.type === 'CSI' ? 'CSI Payroll' : 'Internal Payroll';
+
+  // Full consultant breakdown table
+  const allEmployees = (entities || []).flatMap(ent =>
+    ent.employees.map(emp => ({ ...emp, entity: ent.sheetName }))
+  );
+  const MAX_ROWS = 100;
+  const empRows = allEmployees.slice(0, MAX_ROWS).map((emp, i) => `
+    <tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'}">
+      <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px">${emp.employeeId}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px">${emp.name}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px">${emp.entity}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:right">${fmtRM(emp.grossSalary)}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:right">${fmtRM(emp.netSalary)}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:right;font-weight:600">${fmtRM(emp.ctcHexa)}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:right">${fmtRM(emp.epfEmployer)}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:right">${fmtRM(emp.mtd)}</td>
+    </tr>`).join('');
+
+  const statRows = Object.entries(check.statutory || {}).map(([k, v]) =>
+    tableRow(k.toUpperCase(), fmtRM(v))
+  ).join('');
+
   await resend.emails.send({
     from: EMAIL_FROM, to,
     subject: `[Hexa Finance] ${label} Check — ${role} Required | ${kase.reference}`,
     html: emailWrap(`
       <h2 style="font-size:18px;font-weight:700;color:#111;margin:0 0 4px">Check File Approval — ${role}</h2>
-      <p style="color:#555;margin:0 0 20px">Hi ${name}, you are assigned as <strong>${role}</strong> for the following payroll run.</p>
+      <p style="color:#555;margin:0 0 20px">Hi ${name}, you are assigned as <strong>${role}</strong> for the following payroll run. Please review the full details below.</p>
+
+      <h3 style="font-size:13px;font-weight:700;color:#6366f1;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.05em">Summary</h3>
       <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:20px">
-        ${tableRow('Reference', `<span style="color:#6366f1">${kase.reference}</span>`)}
+        ${tableRow('Reference', `<span style="color:#6366f1;font-weight:700">${kase.reference}</span>`)}
         ${tableRow('Type', label)}
         ${tableRow('Entity', kase.entity_name || kase.entity)}
         ${tableRow('Period', kase.period)}
+        ${tableRow('Payment Date', kase.payment_date || '—')}
         ${tableRow('Consultants', check.consultantCount)}
         ${tableRow('Gross Payroll', fmtRM(check.grossPayrollTotal))}
-        ${tableRow('Total CTC', fmtRM(check.ctcTotal))}
-        ${tableRow('Exceptions', `<span style="color:${check.flagCount > 0 ? '#ef4444' : '#22c55e'}">${check.flagCount} flag(s)</span>`)}
+        ${tableRow('Net Salary', fmtRM(check.netSalaryTotal))}
+        ${tableRow('Total CTC', `<strong style="font-size:16px;color:#111">${fmtRM(check.ctcTotal)}</strong>`)}
+        ${tableRow('Exceptions', `<span style="color:${check.flagCount > 0 ? '#ef4444' : '#22c55e'};font-weight:700">${check.flagCount} flag(s)</span>`)}
       </table>
-      ${check.flagCount > 0 ? `<div style="background:#fef2f2;border-left:4px solid #ef4444;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#991b1b">
-        ${check.flags.slice(0, 5).map(f => `<div>⚠ ${f.code}${f.employee ? ` — ${f.employee}` : ''}</div>`).join('')}
-        ${check.flagCount > 5 ? `<div>...and ${check.flagCount - 5} more</div>` : ''}
-      </div>` : ''}
+
+      <h3 style="font-size:13px;font-weight:700;color:#6366f1;margin:16px 0 8px;text-transform:uppercase;letter-spacing:0.05em">Statutory Breakdown</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:20px">
+        ${statRows}
+      </table>
+
+      ${check.flagCount > 0 ? `
+      <h3 style="font-size:13px;font-weight:700;color:#ef4444;margin:16px 0 8px;text-transform:uppercase">Exceptions / Flags</h3>
+      <div style="background:#fef2f2;border-left:4px solid #ef4444;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#991b1b">
+        ${check.flags.map(f => `<div style="margin-bottom:4px">⚠ <strong>${f.code}</strong>${f.employee ? ` — ${f.employee}` : ''}${f.entity ? ` (${f.entity})` : ''}${f.diff ? ` Δ ${fmtRM(f.diff)}` : ''}</div>`).join('')}
+      </div>` : '<div style="background:#f0fdf4;border-left:4px solid #22c55e;padding:10px 14px;margin-bottom:20px;font-size:13px;color:#166534">✓ No exceptions — all checks passed.</div>'}
+
+      <h3 style="font-size:13px;font-weight:700;color:#6366f1;margin:16px 0 8px;text-transform:uppercase;letter-spacing:0.05em">Full Consultant List (${allEmployees.length})</h3>
+      <div style="overflow-x:auto;margin-bottom:24px">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:600px">
+          <thead>
+            <tr style="background:#f1f5f9">
+              <th style="padding:6px 8px;text-align:left;border-bottom:2px solid #e2e8f0">Emp ID</th>
+              <th style="padding:6px 8px;text-align:left;border-bottom:2px solid #e2e8f0">Name</th>
+              <th style="padding:6px 8px;text-align:left;border-bottom:2px solid #e2e8f0">Entity</th>
+              <th style="padding:6px 8px;text-align:right;border-bottom:2px solid #e2e8f0">Gross</th>
+              <th style="padding:6px 8px;text-align:right;border-bottom:2px solid #e2e8f0">Net</th>
+              <th style="padding:6px 8px;text-align:right;border-bottom:2px solid #e2e8f0">CTC</th>
+              <th style="padding:6px 8px;text-align:right;border-bottom:2px solid #e2e8f0">EPF</th>
+              <th style="padding:6px 8px;text-align:right;border-bottom:2px solid #e2e8f0">MTD</th>
+            </tr>
+          </thead>
+          <tbody>${empRows}</tbody>
+          <tfoot>
+            <tr style="background:#f8fafc;font-weight:700">
+              <td colspan="3" style="padding:6px 8px;border-top:2px solid #e2e8f0">TOTAL</td>
+              <td style="padding:6px 8px;border-top:2px solid #e2e8f0;text-align:right">${fmtRM(check.grossPayrollTotal)}</td>
+              <td style="padding:6px 8px;border-top:2px solid #e2e8f0;text-align:right">${fmtRM(check.netSalaryTotal)}</td>
+              <td style="padding:6px 8px;border-top:2px solid #e2e8f0;text-align:right">${fmtRM(check.ctcTotal)}</td>
+              <td style="padding:6px 8px;border-top:2px solid #e2e8f0;text-align:right">${fmtRM(check.statutory?.epf)}</td>
+              <td style="padding:6px 8px;border-top:2px solid #e2e8f0;text-align:right">${fmtRM(check.statutory?.mtd)}</td>
+            </tr>
+          </tfoot>
+        </table>
+        ${allEmployees.length > MAX_ROWS ? `<p style="font-size:12px;color:#64748b;margin-top:4px">Showing first ${MAX_ROWS} of ${allEmployees.length} consultants.</p>` : ''}
+      </div>
+
       <div style="margin-bottom:24px">
         <a href="${approveUrl}" style="display:inline-block;background:#22c55e;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;margin-right:12px">Approve</a>
         <a href="${rejectUrl}" style="display:inline-block;background:#ef4444;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">Reject</a>
@@ -306,7 +444,7 @@ router.post('/:id/send-check-approval', requireAuth, async (req, res) => {
     await emailCheckApproval(resend, {
       to: APPROVERS.reviewer.email, name: APPROVERS.reviewer.name, role: 'First Reviewer',
       kase, approveUrl: `${base}?action=approve`, rejectUrl: `${base}?action=reject`,
-      check: kase.check_data,
+      check: kase.check_data, entities: kase.parsed_data?.entities || [],
     });
   } catch (e) { console.error('Email error:', e.message); }
 
@@ -374,7 +512,7 @@ router.get('/approve/:token', async (req, res) => {
         to: APPROVERS.final.email, name: APPROVERS.final.name, role: 'Final Approver',
         kase: { ...kase, check_reviewer_name: tok.approver_name },
         approveUrl: `${base}?action=approve`, rejectUrl: `${base}?action=reject`,
-        check: kase.check_data,
+        check: kase.check_data, entities: kase.parsed_data?.entities || [],
       });
     } catch (e) { console.error('Email error:', e.message); }
 
@@ -411,7 +549,7 @@ router.get('/approve/:token', async (req, res) => {
   return res.send(approvalPage('Fully Approved', '#22c55e', `Check file for ${kase.reference} has been approved. The finance team has been notified to proceed.`));
 });
 
-// ─── Step 4: Generate bank file ───────────────────────────────────────────────
+// ─── Step 4: Generate bank files (RCMS XLSX + RCgen TXT) ─────────────────────
 
 router.post('/:id/gen-bank-file', requireAuth, async (req, res) => {
   const db = getDb();
@@ -419,50 +557,152 @@ router.post('/:id/gen-bank-file', requireAuth, async (req, res) => {
 
   const { data: kase } = await db.from('payroll_cases').select('*').eq('id', req.params.id).single();
   if (!kase) return res.status(404).json({ error: 'Case not found.' });
-  if (kase.status !== 'check_approved') return res.status(409).json({ error: `Bank file requires check approval. Current status: ${kase.status}` });
+  if (kase.status !== 'check_approved') return res.status(409).json({ error: `Bank file requires check approval. Status: ${kase.status}` });
 
   const entities = kase.parsed_data?.entities || [];
   const check = kase.check_data || {};
   const now = new Date().toISOString();
 
-  const rows = [['Seq', 'Entity', 'Employee ID', 'Name', 'Cost Centre', 'Gross Salary', 'Net Salary', 'CTC (Hexa)', 'EPF Employer', 'EIS Employer', 'SOCSO Employer', 'HRDF', 'MTD']];
-  let seq = 1;
+  // Determine payment date & value date
+  const paymentDateStr = kase.payment_date || new Date().toISOString().slice(0, 10);
+  const [yr, mo, dy] = paymentDateStr.split('-');
+  const valueDate = `${dy}${mo}${yr}`;
+  const mmyy = `${mo}${yr.slice(2)}`;
+
+  // Fetch Airtable for bank details
+  let airtableList = [];
+  try { airtableList = await fetchAirtableConsultants(); } catch (_) {}
+
+  const corporateId  = process.env.BANK_CORPORATE_ID  || 'MYMHEXAMATI';
+  const groupId      = process.env.BANK_GROUP_ID       || 'MYMHEXA1D';
+  const debitAccount = process.env.BANK_DEBIT_ACCOUNT  || '';
+  const notifyEmails = (process.env.BANK_NOTIFY_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
+
+  // ── Build beneficiary rows from matched data ────────────────────────────────
+  const beneficiaries = [];
+  let seqRef = 100;
   for (const ent of entities) {
     for (const emp of ent.employees) {
-      rows.push([seq++, ent.sheetName, emp.employeeId, emp.name, emp.costCentre,
-        emp.grossSalary, emp.netSalary, emp.ctcHexa,
-        emp.epfEmployer, emp.eisEmployer, emp.socsoEmployer, emp.hrdf, emp.mtd]);
+      const matched = matchConsultant(emp, airtableList);
+      beneficiaries.push({
+        seq: seqRef++,
+        employeeId: emp.employeeId,
+        name: matched?.name || emp.name,
+        costCentre: emp.costCentre,
+        amount: emp.netSalary,   // pay net salary
+        accountNumber: matched?.accountNo || '',
+        bankName: matched?.bankName || '',
+        bankCode: bankNameToCode(matched?.bankName),
+        idNumber: matched?.idNumber || '',
+        advicePrefix: (matched?.name || emp.name).replace(/\s+/g, '_'),
+        email: notifyEmails[0] || '',
+        entity: ent.sheetName,
+        paymentMode: 'IT',
+        matched: !!matched,
+      });
     }
   }
-  rows.push([]);
-  rows.push(['', 'TOTAL', '', '', '',
-    check.grossPayrollTotal, check.netSalaryTotal, check.ctcTotal,
-    check.statutory?.epf, check.statutory?.eis, check.statutory?.socso,
-    check.statutory?.hrdf, check.statutory?.mtd]);
 
-  const stampRow = [`Generated by: Hexa System | Triggered by: ${kase.check_final_approver_name} approval | Ref: ${kase.reference} | ${now}`];
-  rows.push([]); rows.push(stampRow);
+  // ── RCMS XLSX (bank upload report format) ──────────────────────────────────
+  const RCMS_HEADERS = [
+    'Payment Mode','Value Date','Customer Reference Number','Favourite Beneficiary Code',
+    'Transaction Amount (RM)','Credit Account Number','Beneficiary Name 1','Beneficiary Name 2',
+    'Beneficiary Name 3','New IC No','Old IC No','Business Registration Number',
+    'Police/ Army ID/ Passport No','Beneficiary Bank Code','Email','Advice Detail',
+    'Debit Description','Credit Description','Joint Name','Joint New ID No',
+    'Joint Old ID No','Joint Business Reg. No.','Joint Police/ Army ID/ Passport No.',
+    'Purpose of Transfer','Others Purpose of Transfer','Rentas Instruction to Bank',
+    'Charges Borne by','Email 2','Email 3','Email 4','Email 5',
+  ];
+
+  const xlsxRows = [RCMS_HEADERS];
+  for (const b of beneficiaries) {
+    const advice = `${b.advicePrefix}_${mmyy}`;
+    const row = new Array(31).fill('');
+    row[0]  = b.paymentMode;
+    row[1]  = valueDate;
+    row[2]  = b.seq;
+    row[3]  = '';
+    row[4]  = b.amount;
+    row[5]  = b.accountNumber;
+    row[6]  = b.name;
+    row[9]  = b.idNumber;
+    row[13] = b.bankCode;
+    row[14] = b.email;
+    row[15] = advice;
+    row[16] = advice;
+    row[17] = advice;
+    if (notifyEmails[1]) row[28] = notifyEmails[1];
+    xlsxRows.push(row);
+  }
+
+  // Summary row
+  xlsxRows.push([]);
+  xlsxRows.push(['', '', '', '', check.netSalaryTotal, '', `TOTAL — ${beneficiaries.length} consultants`, '', '', '', '', '', '', '', '', '', `Ref: ${kase.reference}`, '', '', '', '', '', '', '', '', '', '', '', '', '', ''  ]);
+  xlsxRows.push([]);
+  xlsxRows.push([`Generated by: Hexa System | Triggered by: ${kase.check_final_approver_name} approval | Ref: ${kase.reference} | ${now}`]);
 
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Bank Upload');
-  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-  const fileHash = sha256(buf);
-  const fileName = `BANKFILE-${kase.reference}.xlsx`;
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(xlsxRows), `Bank_${valueDate}_CSI`);
+  const xlsxBuf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  const xlsxHash = sha256(xlsxBuf);
+  const xlsxName = `RCMS_BankUpload_${kase.reference}_${valueDate}.xlsx`;
 
+  // ── RCgen TXT (pipe-delimited) ─────────────────────────────────────────────
+  const tsNow = new Date();
+  const tsPart = `${tsNow.getFullYear()}${pad(tsNow.getMonth()+1)}${pad(tsNow.getDate())}${pad(tsNow.getHours())}${pad(tsNow.getMinutes())}${pad(tsNow.getSeconds())}`;
+  const txtLines = [`00|${corporateId}|${groupId}||B||||||||||||||||||||||||`];
+
+  for (const b of beneficiaries) {
+    const advice = `${b.advicePrefix}_${mmyy}`;
+    const amount = parseFloat(b.amount || 0).toFixed(2);
+    const empty  = '|'.repeat(200);
+    txtLines.push(
+      `01|${b.paymentMode}|Domestic Payments (MY)||${valueDate}|||${b.seq}||${advice}|MYR|${amount}|Y|MYR|${debitAccount}|${b.accountNumber}|||Y|${b.name}||||${b.idNumber}|||${b.bankCode}||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||${advice}|||||||01${empty}`
+    );
+    txtLines.push(`02|PA|${b.seq}|${b.email}|||${advice}|||||||${amount}|||||||${notifyEmails[1]||''}|${notifyEmails[2]||''}||||||||||||||||||`);
+  }
+
+  const txtContent = txtLines.join('\n');
+  const txtBuf = Buffer.from(txtContent, 'utf8');
+  const txtHash = sha256(txtBuf);
+  const txtName = `RCgen_Payment_DP_${tsPart}.txt`;
+
+  // Save both to DB
   await db.from('payroll_cases').update({
     status: 'bank_file_generated',
-    bank_file_name: fileName, bank_file_hash: fileHash,
-    bank_file_data: buf.toString('base64'),
-    bank_file_generated_at: now, bank_file_triggered_by: kase.check_final_approver_name,
+    bank_file_name: xlsxName,
+    bank_file_hash: xlsxHash,
+    bank_file_data: xlsxBuf.toString('base64'),
+    bank_file_generated_at: now,
+    bank_file_triggered_by: kase.check_final_approver_name,
+    // Store TXT in a second field (reuse bank_receipt fields temporarily)
+    bank_receipt_name: txtName,
+    bank_receipt_data: txtBuf.toString('base64'),
   }).eq('id', kase.id);
 
   await auditLog(db, kase.id, 'BANK_FILE_GENERATED', req.user.name || req.user.email, String(req.user.id || ''), getIp(req), {
-    fileName, fileHash,
-    stamp: `Generated by: AI Engine | Triggered by: ${kase.check_final_approver_name} | Ref: ${kase.reference} | ${now}`,
+    xlsxName, xlsxHash, txtName, txtHash,
+    matched: beneficiaries.filter(b => b.matched).length,
+    unmatched: beneficiaries.filter(b => !b.matched).length,
+    stamp: `Generated by: Hexa System | Triggered by: ${kase.check_final_approver_name} | Ref: ${kase.reference} | ${now}`,
   });
 
+  // Return XLSX for immediate download; TXT available via separate endpoint
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${xlsxName}"`);
+  res.send(xlsxBuf);
+});
+
+// GET /:id/bank-file-txt — download RCgen TXT
+router.get('/:id/bank-file-txt', requireAuth, async (req, res) => {
+  const db = getDb();
+  if (!db) return res.status(503).json({ error: 'Database not configured.' });
+  const { data: kase } = await db.from('payroll_cases').select('bank_receipt_name,bank_receipt_data').eq('id', req.params.id).single();
+  if (!kase?.bank_receipt_data) return res.status(404).json({ error: 'TXT file not found. Generate bank files first.' });
+  const buf = Buffer.from(kase.bank_receipt_data, 'base64');
+  res.setHeader('Content-Type', 'text/plain');
+  res.setHeader('Content-Disposition', `attachment; filename="${kase.bank_receipt_name}"`);
   res.send(buf);
 });
 
@@ -613,6 +853,40 @@ router.get('/director/:token', async (req, res) => {
   return res.send(approvalPage('Payment Approved', '#22c55e', `Payment for ${kase.reference} approved. Amount: ${fmtRM(kase.check_data?.ctcTotal || 0)}. The finance team has been notified.`));
 });
 
+// ─── Step 6b: In-app manual payment confirmation ──────────────────────────────
+
+router.post('/:id/confirm-payment', requireAuth, async (req, res) => {
+  const db = getDb();
+  if (!db) return res.status(503).json({ error: 'Database not configured.' });
+
+  const { data: kase } = await db.from('payroll_cases').select('*').eq('id', req.params.id).single();
+  if (!kase) return res.status(404).json({ error: 'Case not found.' });
+  if (!['payment_approval_sent', 'bank_uploaded'].includes(kase.status)) {
+    return res.status(409).json({ error: `Cannot confirm payment from status: ${kase.status}` });
+  }
+
+  const now = new Date().toISOString();
+  const cert = {
+    type: 'PAYMENT_APPROVAL', reference: kase.reference,
+    approvedBy: req.user.name || req.user.email,
+    amount: `RM ${Number(kase.check_data?.ctcTotal || 0).toLocaleString('en-MY', { minimumFractionDigits: 2 })}`,
+    consultantCount: kase.check_data?.consultantCount,
+    bankPortalRef: kase.bank_portal_ref,
+    entity: kase.entity_name || kase.entity, period: kase.period,
+    timestamp: now, confirmedVia: 'in-app',
+    stamp: `Payment Approved in Bank by: ${req.user.name} | Ref: ${kase.reference} | Date-Time: ${now} | Confirmed via: In-App`,
+  };
+
+  await db.from('payroll_cases').update({
+    status: 'payment_approved',
+    payment_approved_by: req.user.name || req.user.email,
+    payment_approved_at: now, payment_approval_cert: cert,
+  }).eq('id', kase.id);
+
+  await auditLog(db, kase.id, 'PAYMENT_CONFIRMED_INAPP', req.user.name || req.user.email, String(req.user.id || ''), getIp(req), { cert });
+  res.json({ confirmed: true });
+});
+
 // ─── Step 7: Post to Zoho Books ───────────────────────────────────────────────
 
 router.post('/:id/post-zoho', requireAuth, async (req, res) => {
@@ -624,7 +898,7 @@ router.post('/:id/post-zoho', requireAuth, async (req, res) => {
   if (kase.status !== 'payment_approved') return res.status(409).json({ error: `Zoho posting requires payment approval. Status: ${kase.status}` });
   if (!kase.check_approval_cert || !kase.payment_approval_cert) return res.status(409).json({ error: 'Both approval certificates must exist.' });
 
-  const { orgId, journalDate, lineItems, sheetName } = req.body;
+  const { orgId, journalDate, lineItems, sheetName, expenseAccountId, bankAccountId } = req.body;
   if (!orgId || !journalDate || !lineItems?.length || !sheetName) {
     return res.status(400).json({ error: 'orgId, journalDate, sheetName, and lineItems are required.' });
   }
@@ -652,9 +926,30 @@ router.post('/:id/post-zoho', requireAuth, async (req, res) => {
     return res.status(502).json({ error: err.message });
   }
 
+  // Optionally book Zoho expense (bank payment entry: DR Salary Payable / CR Bank)
+  let expenseId = null;
+  if (expenseAccountId && bankAccountId && kase.check_data?.ctcTotal) {
+    try {
+      const expense = await createExpense(orgId, {
+        account_id: expenseAccountId,
+        paid_through_account_id: bankAccountId,
+        date: journalDate,
+        amount: round2local(kase.check_data.ctcTotal),
+        description: narration,
+        reference_number: kase.reference,
+        currency_code: 'MYR',
+        exchange_rate: 1,
+        is_billable: false,
+      });
+      expenseId = expense?.expense_id;
+    } catch (expErr) {
+      console.error('Zoho expense error (non-fatal):', expErr.message);
+    }
+  }
+
   await db.from('payroll_cases').update({
     status: 'zoho_posted', zoho_org_id: orgId,
-    zoho_journal_ids: [journal?.journal_id].filter(Boolean),
+    zoho_journal_ids: [journal?.journal_id, expenseId].filter(Boolean),
     zoho_posted_at: now, zoho_posted_by: req.user.name || req.user.email,
     audit_assembled_at: now,
   }).eq('id', kase.id);
