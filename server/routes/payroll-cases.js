@@ -14,7 +14,7 @@ const APP_URL = process.env.APP_URL || 'https://hexajrfe.hexamatics.finance';
 const EMAIL_FROM = process.env.EMAIL_FROM || 'noreply@hexamatics.finance';
 
 const APPROVERS = {
-  reviewer: { name: 'Ikhram Merican', email: 'ikhram.merican@hexamatics.com' },
+  reviewer: { name: 'Asim Subedi', email: 'asim.ovc977@gmail.com' },
   final:    { name: 'Praphulla Subedi', email: 'praphulla@hexamatics.com' },
   director: { name: 'Dato Thiruchelvapalan', email: 'thiruchelvapalan@hexamatics.com' },
 };
@@ -212,7 +212,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   const db = getDb();
   if (!db) return res.status(503).json({ error: 'Database not configured.' });
 
-  const { type = 'CSI', entity, entityName, period } = req.body;
+  const { type = 'CSI', entity, entityName, period, paymentDate } = req.body;
   if (!entity || !period) return res.status(400).json({ error: 'entity and period are required.' });
   if (!/^\d{6}$/.test(period)) return res.status(400).json({ error: 'period must be YYYYMM (e.g. 202506).' });
   if (!['CSI', 'PAYROLL'].includes(type.toUpperCase())) return res.status(400).json({ error: 'type must be CSI or PAYROLL.' });
@@ -243,6 +243,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     uploaded_by_name: req.user.name || req.user.email,
     uploaded_by_email: req.user.email,
     uploaded_at: new Date().toISOString(), upload_ip: ip,
+    payment_date: paymentDate || null,
   }).select().single();
 
   if (error) return res.status(500).json({ error: error.message });

@@ -234,35 +234,60 @@ function StepProgress({ kase }) {
 
 // ─── New Case Form ────────────────────────────────────────────────────────────
 
+const ORGS_LIST = Object.entries(orgsConfig).map(([code, cfg]) => ({ code, name: cfg.name, id: cfg.id }));
+
+function detectPeriodFromFilename(name) {
+  // Try YYYYMM directly (e.g. 202506)
+  const m1 = name.match(/\b(20\d{2})(0[1-9]|1[0-2])\b/);
+  if (m1) return m1[1] + m1[2];
+  // Try YYYY-MM or YYYY_MM
+  const m2 = name.match(/\b(20\d{2})[-_](0[1-9]|1[0-2])\b/);
+  if (m2) return m2[1] + m2[2];
+  // Try MM-YYYY or MM_YYYY
+  const m3 = name.match(/\b(0[1-9]|1[0-2])[-_](20\d{2})\b/);
+  if (m3) return m3[2] + m3[1];
+  return null;
+}
+
+function detectEntityFromFilename(name) {
+  const upper = name.toUpperCase();
+  return ORGS_LIST.find(o => upper.includes(o.code)) || null;
+}
+
 function NewCaseForm({ type, authToken, user, onDone, onBack }) {
   const [file, setFile] = useState(null);
   const [entityCode, setEntityCode] = useState('');
-  const [entityName, setEntityName] = useState('');
   const [period, setPeriod] = useState(currentPeriod());
+  const [paymentDate, setPaymentDate] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [preview, setPreview] = useState(null);
 
-  async function handleFile(f) {
+  const selectedOrg = ORGS_LIST.find(o => o.code === entityCode) || null;
+
+  function handleFile(f) {
     setFile(f);
     if (!f) return;
-    // Auto-suggest entity code
-    const guess = autoEntityCode(f.name.replace(/\.[^.]+$/, ''));
-    if (!entityCode && guess) setEntityCode(guess);
+    // Auto-detect entity from filename
+    const detectedEntity = detectEntityFromFilename(f.name);
+    if (detectedEntity && !entityCode) setEntityCode(detectedEntity.code);
+    // Auto-detect period from filename
+    const detectedPeriod = detectPeriodFromFilename(f.name);
+    if (detectedPeriod) setPeriod(detectedPeriod);
   }
 
   async function handleSubmit() {
     if (!file) return setError('Please select a file.');
-    if (!entityCode.trim()) return setError('Entity code is required.');
+    if (!entityCode) return setError('Please select an entity.');
     if (!/^\d{6}$/.test(period)) return setError('Period must be YYYYMM (e.g. 202506).');
 
     setLoading(true); setError('');
     const fd = new FormData();
     fd.append('file', file);
     fd.append('type', type);
-    fd.append('entity', entityCode.trim().toUpperCase());
-    fd.append('entityName', entityName.trim() || entityCode.trim().toUpperCase());
+    fd.append('entity', entityCode);
+    fd.append('entityName', selectedOrg?.name || entityCode);
     fd.append('period', period);
+    if (paymentDate) fd.append('paymentDate', paymentDate);
 
     try {
       const r = await fetch('/api/payroll-cases/upload', { method: 'POST', headers: { 'x-auth-token': authToken }, body: fd });
@@ -313,20 +338,29 @@ function NewCaseForm({ type, authToken, user, onDone, onBack }) {
         </div>
 
         <div className="pf-form-row">
-          <div className="pf-form-section">
-            <label className="label">Entity Code <span className="req">*</span></label>
-            <input className="input" value={entityCode} maxLength={10}
-              onChange={e => setEntityCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
-              placeholder="e.g. HSSB" />
-            <span className="pf-hint">Short code for reference number (e.g. {type}-HSSB-202506-001)</span>
-          </div>
-          <div className="pf-form-section">
-            <label className="label">Entity Full Name</label>
-            <input className="input" value={entityName} onChange={e => setEntityName(e.target.value)} placeholder="e.g. Hexa Salary Sycamore Berhad" />
+          <div className="pf-form-section" style={{ gridColumn: 'span 2' }}>
+            <label className="label">Entity <span className="req">*</span></label>
+            <select className="input" value={entityCode} onChange={e => setEntityCode(e.target.value)}>
+              <option value="">— select entity —</option>
+              {ORGS_LIST.map(o => (
+                <option key={o.code} value={o.code}>{o.code} — {o.name}</option>
+              ))}
+            </select>
+            {selectedOrg && (
+              <span className="pf-hint">
+                Code: <strong>{selectedOrg.code}</strong> · Zoho Org ID: <strong>{selectedOrg.id}</strong>
+              </span>
+            )}
           </div>
           <div className="pf-form-section">
             <label className="label">Period (YYYYMM) <span className="req">*</span></label>
             <input className="input" value={period} onChange={e => setPeriod(e.target.value)} placeholder="202506" maxLength={6} />
+            <span className="pf-hint">Auto-detected from filename if possible</span>
+          </div>
+          <div className="pf-form-section">
+            <label className="label">Payment Date</label>
+            <input type="date" className="input" value={paymentDate} onChange={e => setPaymentDate(e.target.value)} />
+            <span className="pf-hint">Used for GL credit account labelling in Zoho</span>
           </div>
         </div>
 
@@ -334,7 +368,7 @@ function NewCaseForm({ type, authToken, user, onDone, onBack }) {
 
         <div className="pf-form-actions">
           <button className="btn btn-secondary" onClick={onBack} disabled={loading}>Cancel</button>
-          <button className="btn btn-primary" onClick={handleSubmit} disabled={loading || !file}>
+          <button className="btn btn-primary" onClick={handleSubmit} disabled={loading || !file || !entityCode}>
             {loading ? <><span className="spinner"/>&nbsp;Uploading…</> : 'Upload & Create Case'}
           </button>
         </div>
@@ -452,6 +486,7 @@ function Step1Panel({ kase }) {
         <StampBox label="IP Address" value={kase.upload_ip || '—'} />
         <StampBox label="File" value={kase.original_file_name || '—'} />
         <StampBox label="SHA-256 Hash" value={kase.original_file_hash ? kase.original_file_hash.slice(0, 24) + '…' : '—'} />
+        <StampBox label="Payment Date" value={kase.payment_date || '—'} />
         <StampBox label="Reference" value={kase.reference} />
       </div>
       {kase.parsed_data?.entities && (
@@ -561,8 +596,8 @@ function Step3Panel({ kase, authToken, onRefresh }) {
       <PanelHeader step={3} title="Approval Gate (Check)" subtitle="Sequential approval: First Reviewer → Final Approver." />
 
       <div className="pf-approver-chain">
-        <ApproverBox name="Ikhram Merican" role="First Reviewer"
-          status={['check_reviewer_approved','check_approved','bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'].includes(kase.status) ? 'approved' : isRejected && kase.check_rejection_reason?.includes('Ikhram') ? 'rejected' : kase.status === 'check_approval_sent' ? 'pending' : 'waiting'}
+        <ApproverBox name="Asim Subedi" role="First Reviewer"
+          status={['check_reviewer_approved','check_approved','bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'].includes(kase.status) ? 'approved' : isRejected && kase.check_rejection_reason?.includes('Asim') ? 'rejected' : kase.status === 'check_approval_sent' ? 'pending' : 'waiting'}
           timestamp={kase.check_reviewer_approved_at} />
         <div className="pf-chain-arrow">→</div>
         <ApproverBox name="Praphulla Subedi" role="Final Approver"
@@ -863,8 +898,13 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
       if (org?.id) setOrgId(org.id);
     }
     if (!journalDate) {
-      const p = kase.period;
-      if (p?.length === 6) setJournalDate(`${p.slice(0, 4)}-${p.slice(4, 6)}-28`);
+      // Use stored payment date if available, otherwise default to end of period
+      if (kase.payment_date) {
+        setJournalDate(kase.payment_date);
+      } else {
+        const p = kase.period;
+        if (p?.length === 6) setJournalDate(`${p.slice(0, 4)}-${p.slice(4, 6)}-28`);
+      }
     }
   }, []);
 

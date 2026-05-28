@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS payroll_cases (
   -- payment_approval_sent | payment_approved | payment_rejected | zoho_posted
 
   -- Step 1: Upload
+  payment_date DATE,
   original_file_name TEXT,
   original_file_hash TEXT,
   parsed_data JSONB,
