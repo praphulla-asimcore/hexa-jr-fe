@@ -37,7 +37,6 @@ async function fetchAllRecords({ apiKey, baseId, tableName, viewId }) {
       `https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}`
     );
     url.searchParams.set('pageSize', '100');
-    if (viewId) url.searchParams.set('view', viewId);
     if (offset) url.searchParams.set('offset', offset);
 
     const res = await fetch(url.toString(), {
