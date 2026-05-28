@@ -1000,22 +1000,180 @@ function Step8Panel({ kase }) {
 }
 
 // Step 9 — Audit Package
+function buildAuditPackageHtml(kase, logs) {
+  const docs = [
+    { num: 1, name: 'Original CSI/Payroll File', detail: kase.original_file_name, stamp: kase.original_file_hash ? `SHA-256: ${kase.original_file_hash}` : null, done: true },
+    { num: 2, name: 'AI-Generated Check File', detail: `Generated: ${fmtDate(kase.check_generated_at)}`, stamp: kase.check_data ? `Consultants: ${kase.check_data.consultantCount} · CTC: ${fmtRM(kase.check_data.ctcTotal)} · Flags: ${kase.check_data.flagCount}` : null, done: !!kase.check_generated_at },
+    { num: 3, name: 'CSI Check Approval Certificate', detail: kase.check_approval_cert ? `Approved by: ${kase.check_approval_cert.approvedBy} · Reviewed by: ${kase.check_approval_cert.reviewedBy}` : null, stamp: kase.check_approval_cert ? kase.check_approval_cert.stamp : null, done: !!kase.check_approval_cert },
+    { num: 4, name: 'Bank Upload File', detail: kase.bank_file_name, stamp: kase.bank_file_hash ? `SHA-256: ${kase.bank_file_hash}` : null, done: !!kase.bank_file_generated_at },
+    { num: 5, name: 'Bank Upload Log', detail: kase.bank_upload_at ? `Uploaded by: ${kase.bank_upload_by} · Bank Ref: ${kase.bank_portal_ref}` : null, stamp: kase.bank_upload_at ? `Date-Time: ${fmtDate(kase.bank_upload_at)}` : null, done: !!kase.bank_upload_at },
+    { num: 6, name: 'Payment Approval Certificate', detail: kase.payment_approval_cert ? `Approved by: ${kase.payment_approval_cert.approvedBy} · Amount: ${kase.payment_approval_cert.amount}` : null, stamp: kase.payment_approval_cert ? kase.payment_approval_cert.stamp : null, done: !!kase.payment_approval_cert },
+    { num: 7, name: 'Zoho Journal Confirmation', detail: (kase.zoho_journal_ids || [])[0] ? `Zoho JV: ${kase.zoho_journal_ids[0]}` : null, stamp: kase.zoho_posted_at ? `Posted by: ${kase.zoho_posted_by} · Date-Time: ${fmtDate(kase.zoho_posted_at)}` : null, done: !!kase.zoho_posted_at },
+    { num: 8, name: 'Immutable Audit Log', detail: `${logs.length} system events recorded`, done: logs.length > 0 },
+  ];
+
+  const docRows = docs.map(d => `
+    <tr>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:center;font-weight:700;color:${d.done ? '#166534' : '#94a3b8'}">${d.done ? '✓' : d.num}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-weight:600;color:#111">${d.name}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:12px;color:#374151">${d.detail || '—'}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;color:#64748b;font-family:monospace">${d.stamp || ''}</td>
+    </tr>`).join('');
+
+  const logRows = logs.map(l => `
+    <tr>
+      <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:11px;color:#6366f1;white-space:nowrap">${l.event_type}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;font-size:12px">${l.performed_by || 'System'}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;font-size:12px;color:#64748b;white-space:nowrap">${fmtDate(l.created_at)}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;font-size:11px;color:#94a3b8">${l.ip_address || ''}</td>
+    </tr>`).join('');
+
+  const check = kase.check_data || {};
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>AUDIT-PKG-${kase.reference}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; color: #111; background: #fff; padding: 32px 40px; }
+    @media print {
+      body { padding: 16px 24px; }
+      .no-print { display: none !important; }
+      @page { margin: 1.5cm; size: A4; }
+    }
+    h1 { font-size: 22px; font-weight: 800; color: #6366f1; }
+    h2 { font-size: 14px; font-weight: 700; color: #374151; margin: 24px 0 10px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+    th { background: #f8fafc; padding: 8px 10px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; border-bottom: 2px solid #e2e8f0; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 3px solid #6366f1; }
+    .header-left h1 { margin-bottom: 4px; }
+    .header-left p { color: #64748b; font-size: 12px; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+    .badge-green { background: #dcfce7; color: #166534; }
+    .badge-yellow { background: #fef9c3; color: #854d0e; }
+    .meta-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
+    .meta-item { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; }
+    .meta-key { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 3px; }
+    .meta-val { font-size: 14px; font-weight: 700; color: #111; }
+    .print-btn { position: fixed; top: 20px; right: 20px; background: #6366f1; color: #fff; border: none; padding: 10px 20px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 8px rgba(99,102,241,0.3); }
+    .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-size: 11px; color: #94a3b8; text-align: center; }
+  </style>
+</head>
+<body>
+  <button class="no-print print-btn" onclick="window.print()">⬇ Save as PDF</button>
+
+  <div class="header">
+    <div class="header-left">
+      <h1>AUDIT-PKG-${kase.reference}</h1>
+      <p>Hexa Finance · Payroll Audit Package · Generated: ${new Date().toLocaleString('en-MY')}</p>
+      <p style="margin-top:4px">Retention policy: 7 years · Read-only · Append-only storage</p>
+    </div>
+    <div>
+      <span class="badge ${kase.status === 'zoho_posted' ? 'badge-green' : 'badge-yellow'}">${kase.status.replace(/_/g,' ').toUpperCase()}</span>
+    </div>
+  </div>
+
+  <div class="meta-grid">
+    <div class="meta-item"><div class="meta-key">Reference</div><div class="meta-val" style="color:#6366f1">${kase.reference}</div></div>
+    <div class="meta-item"><div class="meta-key">Type</div><div class="meta-val">${kase.type}</div></div>
+    <div class="meta-item"><div class="meta-key">Entity</div><div class="meta-val">${kase.entity_name || kase.entity}</div></div>
+    <div class="meta-item"><div class="meta-key">Period</div><div class="meta-val">${kase.period}</div></div>
+    <div class="meta-item"><div class="meta-key">Consultants</div><div class="meta-val">${check.consultantCount ?? '—'}</div></div>
+    <div class="meta-item"><div class="meta-key">Gross Payroll</div><div class="meta-val">${fmtRM(check.grossPayrollTotal)}</div></div>
+    <div class="meta-item"><div class="meta-key">Total CTC</div><div class="meta-val">${fmtRM(check.ctcTotal)}</div></div>
+    <div class="meta-item"><div class="meta-key">Payment Date</div><div class="meta-val">${kase.payment_date || '—'}</div></div>
+  </div>
+
+  <h2>Document Registry</h2>
+  <table>
+    <thead><tr><th style="width:40px">#</th><th>Document</th><th>Detail</th><th>Stamp / Hash</th></tr></thead>
+    <tbody>${docRows}</tbody>
+  </table>
+
+  ${kase.check_approval_cert ? `
+  <h2>Check Approval Certificate</h2>
+  <table>
+    <tbody>
+      <tr><td style="padding:6px 10px;width:200px;color:#64748b">Reference</td><td style="padding:6px 10px;font-weight:600">${kase.reference}</td></tr>
+      <tr><td style="padding:6px 10px;color:#64748b">First Reviewer</td><td style="padding:6px 10px">${kase.check_approval_cert.reviewedBy || '—'} · ${fmtDate(kase.check_reviewer_approved_at)}</td></tr>
+      <tr><td style="padding:6px 10px;color:#64748b">Final Approver</td><td style="padding:6px 10px">${kase.check_approval_cert.approvedBy} · ${fmtDate(kase.check_approved_at)}</td></tr>
+      <tr><td style="padding:6px 10px;color:#64748b">Stamp</td><td style="padding:6px 10px;font-family:monospace;font-size:11px">${kase.check_approval_cert.stamp || '—'}</td></tr>
+    </tbody>
+  </table>` : ''}
+
+  ${kase.payment_approval_cert ? `
+  <h2>Payment Approval Certificate</h2>
+  <table>
+    <tbody>
+      <tr><td style="padding:6px 10px;width:200px;color:#64748b">Reference</td><td style="padding:6px 10px;font-weight:600">${kase.reference}</td></tr>
+      <tr><td style="padding:6px 10px;color:#64748b">Approved by (Director)</td><td style="padding:6px 10px">${kase.payment_approval_cert.approvedBy} · ${fmtDate(kase.payment_approved_at)}</td></tr>
+      <tr><td style="padding:6px 10px;color:#64748b">Amount Approved</td><td style="padding:6px 10px;font-weight:700">${kase.payment_approval_cert.amount}</td></tr>
+      <tr><td style="padding:6px 10px;color:#64748b">Bank Portal Ref</td><td style="padding:6px 10px">${kase.payment_approval_cert.bankPortalRef || '—'}</td></tr>
+      <tr><td style="padding:6px 10px;color:#64748b">Stamp</td><td style="padding:6px 10px;font-family:monospace;font-size:11px">${kase.payment_approval_cert.stamp || '—'}</td></tr>
+    </tbody>
+  </table>` : ''}
+
+  ${check.statutory ? `
+  <h2>Statutory Breakdown</h2>
+  <table>
+    <thead><tr><th>Component</th><th>Amount (RM)</th></tr></thead>
+    <tbody>
+      <tr><td style="padding:6px 10px">EPF (Employer)</td><td style="padding:6px 10px">${fmtRM(check.statutory.epf)}</td></tr>
+      <tr><td style="padding:6px 10px">EIS (Employer)</td><td style="padding:6px 10px">${fmtRM(check.statutory.eis)}</td></tr>
+      <tr><td style="padding:6px 10px">SOCSO (Employer)</td><td style="padding:6px 10px">${fmtRM(check.statutory.socso)}</td></tr>
+      <tr><td style="padding:6px 10px">HRDF</td><td style="padding:6px 10px">${fmtRM(check.statutory.hrdf)}</td></tr>
+      <tr><td style="padding:6px 10px">MTD (PCB)</td><td style="padding:6px 10px">${fmtRM(check.statutory.mtd)}</td></tr>
+    </tbody>
+  </table>` : ''}
+
+  <h2>Immutable Audit Log (${logs.length} Events)</h2>
+  <table>
+    <thead><tr><th>Event</th><th>Performed By</th><th>Date-Time</th><th>IP Address</th></tr></thead>
+    <tbody>${logRows}</tbody>
+  </table>
+
+  <div class="footer">
+    AUDIT-PKG-${kase.reference} · Hexa Finance · hexamatics.finance · Generated ${new Date().toISOString()} · Retain until ${new Date(new Date().setFullYear(new Date().getFullYear() + 7)).getFullYear()}
+  </div>
+</body>
+</html>`;
+}
+
 function Step9Panel({ kase, logs }) {
-  const isDone = kase.status === 'zoho_posted';
   const docs = [
     { num: 1, name: 'Original file', detail: kase.original_file_name, stamp: kase.original_file_hash ? `SHA-256: ${kase.original_file_hash.slice(0,16)}…` : null, done: true },
     { num: 2, name: 'AI Check file', detail: fmtDate(kase.check_generated_at), done: !!kase.check_generated_at },
-    { num: 3, name: 'CSI Approval Certificate', detail: kase.check_approved_at ? `Approved: ${fmtDate(kase.check_approved_at)}` : null, done: !!kase.check_approval_cert },
+    { num: 3, name: 'Check Approval Certificate', detail: kase.check_approved_at ? `Approved: ${fmtDate(kase.check_approved_at)}` : null, done: !!kase.check_approval_cert },
     { num: 4, name: 'Bank upload file', detail: kase.bank_file_name, stamp: kase.bank_file_hash ? `SHA-256: ${kase.bank_file_hash.slice(0,16)}…` : null, done: !!kase.bank_file_generated_at },
-    { num: 5, name: 'Bank upload receipt', detail: kase.bank_receipt_name, done: !!kase.bank_receipt_attached_at },
+    { num: 5, name: 'Bank upload log', detail: kase.bank_upload_at ? `Ref: ${kase.bank_portal_ref}` : null, done: !!kase.bank_upload_at },
     { num: 6, name: 'Payment Approval Certificate', detail: kase.payment_approved_at ? `Approved: ${fmtDate(kase.payment_approved_at)}` : null, done: !!kase.payment_approval_cert },
     { num: 7, name: 'Zoho journal confirmation', detail: (kase.zoho_journal_ids || [])[0] ? `JV: ${kase.zoho_journal_ids[0]}` : null, done: !!kase.zoho_posted_at },
     { num: 8, name: 'Audit log (full event trail)', detail: `${logs.length} events`, done: logs.length > 0 },
   ];
 
+  function downloadPdf() {
+    const html = buildAuditPackageHtml(kase, logs);
+    const w = window.open('', '_blank');
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 800);
+  }
+
   return (
     <div className="pf-panel-body">
-      <PanelHeader step={9} title="Audit Package Assembly" subtitle={`AUDIT-PKG-${kase.reference} — retained 7 years`} />
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div>
+          <PanelHeader step={9} title="Audit Package Assembly" subtitle={`AUDIT-PKG-${kase.reference} — retained 7 years`} />
+        </div>
+        <button className="btn btn-primary" onClick={downloadPdf} style={{ marginTop: 4, flexShrink: 0 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 6 }}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download PDF
+        </button>
+      </div>
+
       <div className="pf-audit-docs">
         {docs.map(doc => (
           <div key={doc.num} className={`pf-audit-doc ${doc.done ? 'pf-audit-doc-done' : 'pf-audit-doc-pending'}`}>
@@ -1028,6 +1186,7 @@ function Step9Panel({ kase, logs }) {
           </div>
         ))}
       </div>
+
       {logs.length > 0 && (
         <div className="pf-detail-card" style={{ marginTop: 20 }}>
           <div className="pf-detail-card-title">Immutable Audit Log ({logs.length} events)</div>
