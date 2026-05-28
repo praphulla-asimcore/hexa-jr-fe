@@ -611,7 +611,7 @@ function Step3Panel({ kase, authToken, onRefresh }) {
   useEffect(() => {
     if (!orgId) {
       const entities = kase.parsed_data?.entities || [];
-      const org = orgsConfig[entities[0]?.sheetName];
+      const org = orgsConfig[kase.entity] || orgsConfig[entities[0]?.sheetName];
       if (org?.id) setOrgId(org.id);
     }
   }, []);
@@ -663,63 +663,65 @@ function Step3Panel({ kase, authToken, onRefresh }) {
           timestamp={kase.check_approved_at} />
       </div>
 
-      {canSend && (
-        <>
-          <div className="pf-detail-card" style={{ marginBottom: 16 }}>
-            <div className="pf-detail-card-title">
-              Zoho Accrual Booking — DR Salary Expense / CR Salary Payable (per consultant)
+      {/* GL selection — always visible while not fully approved/posted */}
+      {!isApproved && !isRejected && (
+        <div className="pf-detail-card" style={{ marginBottom: 16 }}>
+          <div className="pf-detail-card-title">
+            Zoho Accrual Booking — DR Salary Expense / CR Salary Payable (per consultant)
+          </div>
+          <div className="pf-gl-form" style={{ marginTop: 10 }}>
+            <div className="pf-form-section">
+              <label className="label">Organisation</label>
+              <select className="input" value={orgId} onChange={e => { setOrgId(e.target.value); setAccounts([]); }}>
+                <option value="">— select org —</option>
+                {orgs.map(o => <option key={o.id} value={o.id}>{o.label} ({o.name})</option>)}
+              </select>
             </div>
-            <div className="pf-gl-form" style={{ marginTop: 10 }}>
+            <div className="pf-form-section" style={{ display: 'flex', alignItems: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={loadAccounts} disabled={accountsLoading || !orgId} style={{ width: '100%' }}>
+                {accountsLoading ? <><span className="spinner"/>&nbsp;Loading…</> : 'Load GL Accounts'}
+              </button>
+            </div>
+          </div>
+          {accounts.length > 0 && (
+            <div className="pf-gl-form" style={{ marginTop: 12 }}>
               <div className="pf-form-section">
-                <label className="label">Organisation</label>
-                <select className="input" value={orgId} onChange={e => { setOrgId(e.target.value); setAccounts([]); }}>
-                  <option value="">— select org —</option>
-                  {orgs.map(o => <option key={o.id} value={o.id}>{o.label} ({o.name})</option>)}
+                <label className="label">Debit — Salary Expense Account</label>
+                <select className="input" value={debitAccount} onChange={e => setDebitAccount(e.target.value)}>
+                  <option value="">— select —</option>
+                  {accounts.map(a => <option key={a.id} value={a.id}>{a.type} — {a.name}</option>)}
                 </select>
               </div>
-              <div className="pf-form-section" style={{ display: 'flex', alignItems: 'flex-end' }}>
-                <button className="btn btn-secondary" onClick={loadAccounts} disabled={accountsLoading || !orgId} style={{ width: '100%' }}>
-                  {accountsLoading ? <><span className="spinner"/>&nbsp;Loading…</> : 'Load GL Accounts'}
-                </button>
+              <div className="pf-form-section">
+                <label className="label">Credit — Salary Payable Account</label>
+                <select className="input" value={creditAccount} onChange={e => setCreditAccount(e.target.value)}>
+                  <option value="">— select —</option>
+                  {accounts.map(a => <option key={a.id} value={a.id}>{a.type} — {a.name}</option>)}
+                </select>
               </div>
             </div>
-            {accounts.length > 0 && (
-              <div className="pf-gl-form" style={{ marginTop: 12 }}>
-                <div className="pf-form-section">
-                  <label className="label">Debit — Salary Expense Account</label>
-                  <select className="input" value={debitAccount} onChange={e => setDebitAccount(e.target.value)}>
-                    <option value="">— select —</option>
-                    {accounts.map(a => <option key={a.id} value={a.id}>{a.type} — {a.name}</option>)}
-                  </select>
-                </div>
-                <div className="pf-form-section">
-                  <label className="label">Credit — Salary Payable Account</label>
-                  <select className="input" value={creditAccount} onChange={e => setCreditAccount(e.target.value)}>
-                    <option value="">— select —</option>
-                    {accounts.map(a => <option key={a.id} value={a.id}>{a.type} — {a.name}</option>)}
-                  </select>
-                </div>
-              </div>
-            )}
-            {(!orgId || accounts.length === 0) && (
-              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
-                GL accounts optional — skip to send approval without Zoho booking.
-              </p>
-            )}
-          </div>
+          )}
+          {(!orgId || accounts.length === 0) && (
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+              GL accounts optional — skip to send approval without Zoho booking.
+            </p>
+          )}
+        </div>
+      )}
 
+      {canSend && (
+        <>
           <div className="pf-action-zone">
             <p className="pf-action-desc">
               {debitAccount && creditAccount
-                ? `Will book ${(kase.check_data?.consultantCount || 0)} individual accrual entries in Zoho (DR Salary Expense / CR Salary Payable), then send approval email to Asim Subedi.`
-                : 'Send the check file for approval. Add GL accounts above to also book payroll accrual in Zoho simultaneously.'}
+                ? `Will book ${(kase.check_data?.consultantCount || 0)} individual accrual entries in Zoho, then send approval email to Asim Subedi.`
+                : 'Send the check file for approval. Set GL accounts above to also book payroll accrual in Zoho simultaneously.'}
             </p>
             {error && <div className="error-msg">{error}</div>}
             <button className="btn btn-primary" onClick={sendApproval} disabled={loading}>
               {loading ? <><span className="spinner"/>&nbsp;Sending…</> : debitAccount && creditAccount ? 'Book Accrual & Send for Approval' : 'Send for Approval'}
             </button>
           </div>
-
           {accrualResults && (
             <div className="pf-detail-card" style={{ marginTop: 12 }}>
               <div className="pf-detail-card-title">
@@ -1057,8 +1059,9 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
   const allEmployees = entities.flatMap(e => e.employees.map(emp => ({ ...emp, entityName: e.sheetName })));
 
   useEffect(() => {
-    if (!orgId && entities.length) {
-      const org = orgsConfig[entities[0].sheetName];
+    if (!orgId) {
+      // kase.entity is the stored code (HSSB, HCSSB, etc.) — matches orgsConfig keys directly
+      const org = orgsConfig[kase.entity] || orgsConfig[entities[0]?.sheetName];
       if (org?.id) setOrgId(org.id);
     }
     if (!journalDate) {
