@@ -16,7 +16,7 @@ const EMAIL_FROM = process.env.EMAIL_FROM || 'noreply@hexamatics.finance';
 const APPROVERS = {
   reviewer: { name: 'Asim Subedi', email: 'asim.ovc977@gmail.com' },
   final:    { name: 'Praphulla Subedi', email: 'praphulla@hexamatics.com' },
-  director: { name: 'Dato Thiruchelvapalan', email: 'thiruchelvapalan@hexamatics.com' },
+  director: { name: 'Dato Thiruchelvapalan', email: 'tripathisonee@gmail.com' },
 };
 
 const upload = multer({
