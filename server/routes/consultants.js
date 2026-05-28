@@ -1,12 +1,15 @@
 const express = require('express');
-const axios = require('axios');
 
 const router = express.Router();
 
-const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
-const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
-const AIRTABLE_TABLE_NAME = process.env.AIRTABLE_TABLE_NAME;
-const AIRTABLE_VIEW_ID = process.env.AIRTABLE_VIEW_ID;
+function getConfig() {
+  return {
+    apiKey: process.env.AIRTABLE_API_KEY,
+    baseId: process.env.AIRTABLE_BASE_ID,
+    tableName: process.env.AIRTABLE_TABLE_NAME,
+    viewId: process.env.AIRTABLE_VIEW_ID,
+  };
+}
 
 function mapRecord(record) {
   const f = record.fields;
@@ -25,45 +28,51 @@ function mapRecord(record) {
   };
 }
 
-// Fetch all pages from Airtable (100 records per page)
-async function fetchAllRecords() {
+async function fetchAllRecords({ apiKey, baseId, tableName, viewId }) {
   const records = [];
   let offset = null;
 
   do {
-    const params = {
-      view: AIRTABLE_VIEW_ID,
-      pageSize: 100,
-    };
-    if (offset) params.offset = offset;
-
-    const res = await axios.get(
-      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(AIRTABLE_TABLE_NAME)}`,
-      {
-        headers: { Authorization: `Bearer ${AIRTABLE_API_KEY}` },
-        params,
-      }
+    const url = new URL(
+      `https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}`
     );
+    url.searchParams.set('pageSize', '100');
+    if (viewId) url.searchParams.set('view', viewId);
+    if (offset) url.searchParams.set('offset', offset);
 
-    records.push(...res.data.records);
-    offset = res.data.offset || null;
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      throw Object.assign(new Error(`Airtable ${res.status}`), { status: res.status, body });
+    }
+
+    const data = await res.json();
+    records.push(...data.records);
+    offset = data.offset || null;
   } while (offset);
 
   return records;
 }
 
 router.get('/', async (req, res) => {
-  if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID || !AIRTABLE_TABLE_NAME) {
+  const cfg = getConfig();
+  if (!cfg.apiKey || !cfg.baseId || !cfg.tableName) {
     return res.status(503).json({ error: 'Airtable not configured' });
   }
 
   try {
-    const raw = await fetchAllRecords();
+    const raw = await fetchAllRecords(cfg);
     const consultants = raw.map(mapRecord);
     res.json({ consultants, total: consultants.length });
   } catch (err) {
-    console.error('Airtable fetch error:', err.response?.data || err.message);
-    res.status(502).json({ error: 'Failed to fetch consultant data from Airtable' });
+    console.error('Airtable fetch error:', err.status, err.body || err.message);
+    res.status(502).json({
+      error: 'Failed to fetch consultant data from Airtable',
+      detail: err.body || err.message,
+    });
   }
 });
 

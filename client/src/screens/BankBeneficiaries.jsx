@@ -26,11 +26,11 @@ export default function BankBeneficiaries() {
 
   useEffect(() => {
     fetch('/api/consultants')
-      .then((r) => {
-        if (!r.ok) throw new Error(`Server error ${r.status}`);
-        return r.json();
+      .then((r) => r.json().then((d) => ({ ok: r.ok, status: r.status, d })))
+      .then(({ ok, status, d }) => {
+        if (!ok) throw new Error(d.detail || d.error || `Server error ${status}`);
+        setConsultants(d.consultants || []);
       })
-      .then((d) => setConsultants(d.consultants || []))
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
