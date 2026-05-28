@@ -714,16 +714,11 @@ function Step4Panel({ kase, authToken, onRefresh }) {
 }
 
 // Step 5 — FE Bank Upload
-function Step5Panel({ kase, authToken, user, onRefresh }) {
+function Step5Panel({ kase, authToken, onRefresh }) {
   const [ref, setRef] = useState('');
-  const [receipt, setReceipt] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [loadingReceipt, setLoadingReceipt] = useState(false);
   const [error, setError] = useState('');
   const canLog = kase.status === 'bank_file_generated';
-  const canReceipt = kase.status === 'bank_uploaded' && !kase.bank_receipt_attached_at;
-  const receiptDone = !!kase.bank_receipt_attached_at;
-  const isDone = ['payment_approval_sent','payment_approved','payment_rejected','zoho_posted'].includes(kase.status);
 
   async function logUpload() {
     if (!ref.trim()) return setError('Bank portal reference number is required.');
@@ -740,71 +735,32 @@ function Step5Panel({ kase, authToken, user, onRefresh }) {
     finally { setLoading(false); }
   }
 
-  async function attachReceipt() {
-    if (!receipt) return setError('Please select a receipt file.');
-    setLoadingReceipt(true); setError('');
-    const fd = new FormData(); fd.append('receipt', receipt);
-    try {
-      const r = await fetch(`/api/payroll-cases/${kase.id}/upload-receipt`, { method: 'POST', headers: { 'x-auth-token': authToken }, body: fd });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error);
-      await onRefresh();
-    } catch (e) { setError(e.message); }
-    finally { setLoadingReceipt(false); }
-  }
-
   return (
     <div className="pf-panel-body">
-      <PanelHeader step={5} title="FE Manual Bank Upload" subtitle="Log the bank portal upload and attach the confirmation receipt." />
+      <PanelHeader step={5} title="FE Manual Bank Upload" subtitle="Log the bank portal reference after uploading the file to the bank." />
 
-      <div className="pf-sub-step">
-        <div className={`pf-sub-step-header ${kase.bank_upload_at ? 'done' : ''}`}>
-          <div className="pf-sub-step-num">{kase.bank_upload_at ? '✓' : 'A'}</div>
-          <div>Log Bank Upload</div>
+      {canLog && (
+        <div className="pf-action-zone">
+          <label className="label">Bank Portal Reference Number</label>
+          <input className="input" value={ref} onChange={e => setRef(e.target.value)} placeholder="e.g. TXN-2026050001" style={{ marginBottom: 10 }} />
+          {error && <div className="error-msg">{error}</div>}
+          <button className="btn btn-primary" onClick={logUpload} disabled={loading}>
+            {loading ? <><span className="spinner"/>&nbsp;Logging…</> : 'Log Bank Upload'}
+          </button>
         </div>
-        {canLog && (
-          <div className="pf-sub-step-body">
-            <label className="label">Bank Portal Reference Number</label>
-            <input className="input" value={ref} onChange={e => setRef(e.target.value)} placeholder="e.g. TXN-2026050001" />
-            {error && <div className="error-msg">{error}</div>}
-            <button className="btn btn-primary" style={{ marginTop: 8 }} onClick={logUpload} disabled={loading}>
-              {loading ? <><span className="spinner"/>&nbsp;Logging…</> : 'Log Bank Upload'}
-            </button>
-          </div>
-        )}
-        {kase.bank_upload_at && (
-          <div className="pf-sub-step-done">
-            <StampBox label="Uploaded by" value={kase.bank_upload_by} />
-            <StampBox label="Bank Portal Ref" value={kase.bank_portal_ref} />
-            <StampBox label="Date-Time" value={fmtDate(kase.bank_upload_at)} />
-          </div>
-        )}
-      </div>
+      )}
 
-      <div className="pf-sub-step">
-        <div className={`pf-sub-step-header ${receiptDone ? 'done' : ''}`}>
-          <div className="pf-sub-step-num">{receiptDone ? '✓' : 'B'}</div>
-          <div>Attach Bank Receipt <span className="pf-req-note">(mandatory)</span></div>
+      {kase.bank_upload_at && (
+        <div className="pf-info-banner pf-banner-ok" style={{ marginBottom: 16 }}>Bank upload logged.</div>
+      )}
+
+      {kase.bank_upload_at && (
+        <div className="pf-info-grid">
+          <StampBox label="Uploaded by" value={kase.bank_upload_by} />
+          <StampBox label="Bank Portal Ref" value={kase.bank_portal_ref} />
+          <StampBox label="Date-Time" value={fmtDate(kase.bank_upload_at)} />
         </div>
-        {canReceipt && (
-          <div className="pf-sub-step-body">
-            <p className="pf-action-desc">Attach the bank portal confirmation screenshot or receipt. System will not allow payment approval without this.</p>
-            <input type="file" accept=".pdf,.png,.jpg,.jpeg,.xlsx" onChange={e => setReceipt(e.target.files[0])} />
-            {receipt && <div className="pf-selected-file">{receipt.name}</div>}
-            {error && <div className="error-msg">{error}</div>}
-            <button className="btn btn-primary" style={{ marginTop: 8 }} onClick={attachReceipt} disabled={loadingReceipt || !receipt}>
-              {loadingReceipt ? <><span className="spinner"/>&nbsp;Attaching…</> : 'Attach Receipt'}
-            </button>
-          </div>
-        )}
-        {receiptDone && (
-          <div className="pf-sub-step-done">
-            <StampBox label="Receipt file" value={kase.bank_receipt_name} />
-            <StampBox label="Attached at" value={fmtDate(kase.bank_receipt_attached_at)} />
-          </div>
-        )}
-        {!kase.bank_upload_at && !canLog && <div className="pf-sub-step-locked">Complete Step A first.</div>}
-      </div>
+      )}
     </div>
   );
 }
@@ -837,10 +793,6 @@ function Step6Panel({ kase, authToken, onRefresh }) {
           status={isApproved ? 'approved' : isRejected ? 'rejected' : isPending ? 'pending' : 'waiting'}
           timestamp={kase.payment_approved_at} />
       </div>
-
-      {kase.status === 'bank_uploaded' && !kase.bank_receipt_attached_at && (
-        <div className="pf-info-banner pf-banner-warning">Bank receipt must be attached (Step 5B) before sending payment approval.</div>
-      )}
 
       {canSend && (
         <div className="pf-action-zone">

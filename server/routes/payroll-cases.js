@@ -528,7 +528,6 @@ router.post('/:id/send-payment-approval', requireAuth, async (req, res) => {
   const { data: kase } = await db.from('payroll_cases').select('*').eq('id', req.params.id).single();
   if (!kase) return res.status(404).json({ error: 'Case not found.' });
   if (kase.status !== 'bank_uploaded') return res.status(409).json({ error: `Must be in bank_uploaded status. Current: ${kase.status}` });
-  if (!kase.bank_receipt_attached_at) return res.status(409).json({ error: 'Bank receipt must be attached before sending payment approval.' });
 
   const token = crypto.randomBytes(32).toString('hex');
   await db.from('payroll_approval_tokens').insert({
