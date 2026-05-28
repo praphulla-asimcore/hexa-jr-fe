@@ -22,7 +22,9 @@ function mapRecord(record) {
     client: f['Client Name'] || '—',
     contractStart: f['Contract Start Date'] || null,
     contractEnd: f['Contract End Date'] || null,
-    salary: f['Current Monthly Salary'] || null,
+    salary: f['Current Monthly Salary'] != null
+      ? parseFloat(String(f['Current Monthly Salary']).replace(/,/g, '')) || null
+      : null,
     bankName: f['Bank Name'] || '—',
     accountNo: f['Bank Account Number'] || '—',
   };
@@ -37,6 +39,9 @@ async function fetchAllRecords({ apiKey, baseId, tableName, viewId }) {
       `https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}`
     );
     url.searchParams.set('pageSize', '100');
+    url.searchParams.set('cellFormat', 'string');
+    url.searchParams.set('timeZone', 'Asia/Kuala_Lumpur');
+    url.searchParams.set('userLocale', 'en-MY');
     if (offset) url.searchParams.set('offset', offset);
 
     const res = await fetch(url.toString(), {
