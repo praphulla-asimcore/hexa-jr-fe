@@ -31,12 +31,25 @@ export default function Login({ onLogin }) {
 
   return (
     <div className="login-page">
-      <div className="login-card card">
+      {/* Animated background orbs */}
+      <div className="login-orbs">
+        <div className="login-orb login-orb-1" />
+        <div className="login-orb login-orb-2" />
+        <div className="login-orb login-orb-3" />
+      </div>
+
+      <div className="login-card">
         <div className="login-brand">
-          <Logo size={28} />
+          <div className="login-brand-logo">
+            <Logo size={32} />
+          </div>
+          <div className="login-brand-name">Hexa Finance</div>
+          <div className="login-brand-tagline">Executive Finance Portal</div>
         </div>
+
         <h1 className="login-title">Sign in</h1>
         <p className="login-subtitle">Access the Hexa Finance portal</p>
+
         <form onSubmit={handleSubmit} className="login-form">
           <div className="login-field">
             <label className="label">Email</label>
@@ -61,10 +74,14 @@ export default function Login({ onLogin }) {
             />
           </div>
           {error && <div className="error-msg">{error}</div>}
-          <button className="btn btn-primary login-btn" type="submit" disabled={loading || !email || !password}>
-            {loading ? <><span className="spinner" />Signing in...</> : 'Sign In'}
+          <button className="login-btn" type="submit" disabled={loading || !email || !password}>
+            {loading ? <><span className="spinner" /> Signing in...</> : 'Sign In'}
           </button>
         </form>
+
+        <div className="login-footer">
+          Powered by Hexamatics <span>·</span> Secure <span>·</span> Encrypted
+        </div>
       </div>
     </div>
   );

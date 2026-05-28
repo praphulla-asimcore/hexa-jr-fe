@@ -50,12 +50,28 @@ const NAV = [
   },
 ];
 
+function getInitials(user) {
+  if (!user) return 'HX';
+  const name = user.name || user.email || '';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
 export default function Sidebar({ section, onSection, user, onLogout, onAdminOpen, zohoConfigured }) {
+  const initials = getInitials(user);
+
   return (
     <aside className="sidebar">
       <div className="sidebar-top">
         <div className="sidebar-logo">
           <Logo size={22} />
+          <div className="sidebar-logo-text">
+            <span className="sidebar-logo-name">HEXA</span>
+            <span className="sidebar-logo-sub">Finance</span>
+          </div>
         </div>
         <nav className="sidebar-nav">
           {NAV.map((item) => (
@@ -92,7 +108,11 @@ export default function Sidebar({ section, onSection, user, onLogout, onAdminOpe
             <span className={`sidebar-dot ${zohoConfigured ? 'sidebar-dot-green' : 'sidebar-dot-red'}`} />
           )}
         </button>
+
         <div className="sidebar-user">
+          <div className="sidebar-user-avatar" title={user?.name || user?.email}>
+            {initials}
+          </div>
           <div className="sidebar-user-info">
             <div className="sidebar-user-name">{user?.name || user?.email}</div>
             <div className="sidebar-user-email">{user?.email}</div>
