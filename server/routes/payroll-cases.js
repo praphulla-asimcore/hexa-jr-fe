@@ -743,7 +743,7 @@ router.post('/:id/gen-check', requireAuth, async (req, res) => {
   res.json({ case: updated });
 });
 
-// ─── Step 3a: Send check approval email to reviewer ───────────────────────────
+// ─── Step 3a: Send check approval + book accrual journals in Zoho ─────────────
 
 router.post('/:id/send-check-approval', requireAuth, async (req, res) => {
   const db = getDb();
@@ -752,6 +752,8 @@ router.post('/:id/send-check-approval', requireAuth, async (req, res) => {
   const { data: kase } = await db.from('payroll_cases').select('*').eq('id', req.params.id).single();
   if (!kase) return res.status(404).json({ error: 'Case not found.' });
   if (kase.status !== 'check_generated') return res.status(409).json({ error: `Cannot send approval from status: ${kase.status}` });
+
+  const { orgId, debitAccountId, creditAccountId } = req.body;
 
   const token = crypto.randomBytes(32).toString('hex');
   await db.from('payroll_approval_tokens').insert({
@@ -770,10 +772,47 @@ router.post('/:id/send-check-approval', requireAuth, async (req, res) => {
     });
   } catch (e) { console.error('Email error:', e.message); }
 
-  await db.from('payroll_cases').update({ status: 'check_approval_sent', check_approval_sent_at: new Date().toISOString() }).eq('id', kase.id);
+  const now = new Date().toISOString();
+  const journalDate = kase.payment_date || now.slice(0, 10);
+
+  // Auto-book accrual journals: DR Salary Expense / CR Salary Payable — one per consultant
+  const accrualResults = [];
+  if (orgId && debitAccountId && creditAccountId) {
+    const entities = kase.parsed_data?.entities || [];
+    const allEmployees = entities.flatMap(ent => ent.employees.map(emp => ({ ...emp, entityName: ent.sheetName })));
+    for (const emp of allEmployees) {
+      const empRef = `ACCR-${kase.reference}-${emp.employeeId}`;
+      const narration = `Payroll Accrual – ${kase.period} – ${emp.name} (${emp.employeeId}) – Ref: ${kase.reference}`;
+      const amount = round2(emp.ctcHexa);
+      try {
+        const j = await postJournalEntry(orgId, {
+          journal_date: journalDate,
+          reference_number: empRef,
+          notes: narration,
+          line_items: [
+            { account_id: debitAccountId,  debit_or_credit: 'debit',  amount, description: `${emp.name} – ${kase.period}` },
+            { account_id: creditAccountId, debit_or_credit: 'credit', amount, description: `${emp.name} – ${kase.period}` },
+          ],
+        });
+        accrualResults.push({ name: emp.name, journalId: j?.journal_id, success: true });
+      } catch (err) {
+        accrualResults.push({ name: emp.name, error: err.message, success: false });
+      }
+    }
+    await auditLog(db, kase.id, 'ZOHO_ACCRUAL_BOOKED', req.user.name || req.user.email, String(req.user.id || ''), getIp(req), {
+      orgId, posted: accrualResults.filter(r=>r.success).length, failed: accrualResults.filter(r=>!r.success).length,
+    });
+  }
+
+  await db.from('payroll_cases').update({
+    status: 'check_approval_sent',
+    check_approval_sent_at: now,
+    zoho_org_id: orgId || kase.zoho_org_id || null,
+  }).eq('id', kase.id);
+
   await auditLog(db, kase.id, 'CHECK_APPROVAL_SENT', req.user.name || req.user.email, String(req.user.id || ''), getIp(req), { sentTo: APPROVERS.reviewer.email });
 
-  res.json({ sent: true });
+  res.json({ sent: true, accrualResults });
 });
 
 // ─── Step 3b: Email link — approve/reject check ───────────────────────────────
@@ -1110,84 +1149,60 @@ router.post('/:id/post-zoho', requireAuth, async (req, res) => {
   if (kase.status !== 'payment_approved') return res.status(409).json({ error: `Zoho posting requires payment approval. Status: ${kase.status}` });
   if (!kase.check_approval_cert || !kase.payment_approval_cert) return res.status(409).json({ error: 'Both approval certificates must exist.' });
 
-  const { orgId, journalDate, debitAccountId, creditAccountId, sheetName, expenseAccountId, bankAccountId } = req.body;
-  if (!orgId || !journalDate || !debitAccountId || !creditAccountId || !sheetName) {
-    return res.status(400).json({ error: 'orgId, journalDate, debitAccountId, creditAccountId, and sheetName are required.' });
+  const { orgId, journalDate, payableAccountId, bankAccountId, sheetName } = req.body;
+  if (!orgId || !journalDate || !payableAccountId || !bankAccountId || !sheetName) {
+    return res.status(400).json({ error: 'orgId, journalDate, payableAccountId, bankAccountId, and sheetName are required.' });
   }
 
   const now = new Date().toISOString();
   const round2local = (n) => Math.round(parseFloat(n) * 100) / 100;
 
-  // Flatten all employees from all entities
   const entities = kase.parsed_data?.entities || [];
-  const allEmployees = entities.flatMap(ent =>
-    ent.employees.map(emp => ({ ...emp, entityName: ent.sheetName }))
-  );
-
+  const allEmployees = entities.flatMap(ent => ent.employees.map(emp => ({ ...emp, entityName: ent.sheetName })));
   if (!allEmployees.length) return res.status(400).json({ error: 'No employee data found in case.' });
 
-  // Post one journal entry per consultant (sequential to respect Zoho rate limits)
+  // Book payment clearing: DR Salary Payable / CR Bank — one expense per consultant
   const results = [];
   for (const emp of allEmployees) {
-    const empRef = `${kase.reference}-${emp.employeeId}`;
-    const narration = `${kase.type} Payroll – ${kase.period} – ${emp.name} (${emp.employeeId}) – Ref: ${empRef} – Approved: ${kase.payment_approved_by} – Posted: ${now}`;
     const amount = round2local(emp.ctcHexa);
-
     try {
-      const journal = await postJournalEntry(orgId, {
-        journal_date: journalDate,
-        reference_number: empRef,
-        notes: narration,
-        line_items: [
-          { account_id: debitAccountId,  debit_or_credit: 'debit',  amount, description: `${emp.name} – ${emp.costCentre} – ${kase.period}` },
-          { account_id: creditAccountId, debit_or_credit: 'credit', amount, description: `${emp.name} – ${emp.costCentre} – ${kase.period}` },
-        ],
+      const expense = await createExpense(orgId, {
+        account_id: payableAccountId,
+        paid_through_account_id: bankAccountId,
+        date: journalDate,
+        amount,
+        description: `${kase.type} Salary Payment – ${emp.name} (${emp.employeeId}) – ${kase.period} – Ref: ${kase.reference} – Approved: ${kase.payment_approved_by}`,
+        reference_number: `PMT-${kase.reference}-${emp.employeeId}`,
+        currency_code: 'MYR', exchange_rate: 1, is_billable: false,
       });
-      results.push({ employeeId: emp.employeeId, name: emp.name, amount, journalId: journal?.journal_id, success: true });
+      results.push({ employeeId: emp.employeeId, name: emp.name, amount, journalId: expense?.expense_id, success: true });
     } catch (err) {
       results.push({ employeeId: emp.employeeId, name: emp.name, amount, error: err.message, success: false });
     }
   }
 
   const posted = results.filter(r => r.success);
-  const failed = results.filter(r => !r.success);
+  const failed  = results.filter(r => !r.success);
   const journalIds = posted.map(r => r.journalId).filter(Boolean);
 
-  // If all failed, return error without marking as posted
   if (!posted.length) {
-    return res.status(502).json({ error: 'All journal entries failed.', results });
+    return res.status(502).json({ error: 'All payment entries failed.', results });
   }
 
-  // Attach Check Report PDF + Audit Package PDF to the first journal
+  // Attach Check Report PDF + Audit Package PDF to first expense
   if (journalIds[0]) {
     try {
       const { data: logRows } = await db.from('payroll_audit_log')
         .select('*').eq('case_id', kase.id).order('created_at', { ascending: true });
       const checkPdf = await buildCheckReportPdf(kase);
       const auditPdf = await buildAuditPackagePdf(kase, logRows || []);
-      await attachJournalDocument(orgId, journalIds[0], checkPdf, `CheckReport-${kase.reference}.pdf`, 'application/pdf');
-      await attachJournalDocument(orgId, journalIds[0], auditPdf, `AuditPackage-${kase.reference}.pdf`, 'application/pdf');
+      // Attach to the accrual journal from step 3 if exists, or skip
+      if (kase.zoho_journal_ids?.[0]) {
+        await attachJournalDocument(orgId, kase.zoho_journal_ids[0], checkPdf, `CheckReport-${kase.reference}.pdf`, 'application/pdf');
+        await attachJournalDocument(orgId, kase.zoho_journal_ids[0], auditPdf, `AuditPackage-${kase.reference}.pdf`, 'application/pdf');
+      }
     } catch (attachErr) {
       console.error('Zoho attachment error (non-fatal):', attachErr.message);
-    }
-  }
-
-  // Optionally book Zoho expense per consultant (DR Salary Payable / CR Bank)
-  if (expenseAccountId && bankAccountId) {
-    for (const emp of allEmployees) {
-      try {
-        await createExpense(orgId, {
-          account_id: expenseAccountId,
-          paid_through_account_id: bankAccountId,
-          date: journalDate,
-          amount: round2local(emp.ctcHexa),
-          description: `${kase.type} Salary – ${emp.name} (${emp.employeeId}) – ${kase.period} – Ref: ${kase.reference}`,
-          reference_number: `${kase.reference}-${emp.employeeId}`,
-          currency_code: 'MYR', exchange_rate: 1, is_billable: false,
-        });
-      } catch (expErr) {
-        console.error(`Expense error for ${emp.name} (non-fatal):`, expErr.message);
-      }
     }
   }
 

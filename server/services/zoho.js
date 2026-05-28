@@ -142,22 +142,15 @@ async function attachJournalDocument(orgId, journalId, fileBuffer, filename, mim
   const tld = getZohoDomain();
   const url = `https://www.zohoapis.${tld}/books/v3/journals/${journalId}/documents`;
 
-  // Build multipart form manually (avoid form-data dep)
-  const boundary = `----ZohoFormBoundary${Date.now()}`;
-  const disposition = `Content-Disposition: form-data; name="attachment"; filename="${filename}"`;
-  const contentType = `Content-Type: ${mimeType}`;
-  const parts = [
-    `--${boundary}\r\n${disposition}\r\n${contentType}\r\n\r\n`,
-    fileBuffer,
-    `\r\n--${boundary}--\r\n`,
-  ];
-  const body = Buffer.concat(parts.map(p => Buffer.isBuffer(p) ? p : Buffer.from(p)));
+  const FormData = require('form-data');
+  const form = new FormData();
+  form.append('attachment', fileBuffer, { filename, contentType: mimeType });
 
   try {
-    const response = await axios.post(url, body, {
+    const response = await axios.post(url, form, {
       headers: {
         Authorization: `Zoho-oauthtoken ${token}`,
-        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        ...form.getHeaders(),
       },
       params: { organization_id: String(orgId).trim() },
     });

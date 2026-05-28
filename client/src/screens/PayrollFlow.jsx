@@ -592,20 +592,57 @@ function Step2Panel({ kase, authToken, onRefresh }) {
   );
 }
 
-// Step 3 — Check Approval
+// Step 3 — Check Approval + Zoho Accrual Booking
 function Step3Panel({ kase, authToken, onRefresh }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [orgId, setOrgId] = useState('');
+  const [accounts, setAccounts] = useState([]);
+  const [accountsLoading, setAccountsLoading] = useState(false);
+  const [debitAccount, setDebitAccount] = useState('');
+  const [creditAccount, setCreditAccount] = useState('');
+  const [accrualResults, setAccrualResults] = useState(null);
   const canSend = kase.status === 'check_generated';
   const isApproved = ['check_approved','bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'].includes(kase.status);
   const isRejected = kase.status === 'check_rejected';
 
+  const orgs = Object.entries(orgsConfig).map(([name, cfg]) => ({ name, id: cfg.id, label: cfg.name || name }));
+
+  useEffect(() => {
+    if (!orgId) {
+      const entities = kase.parsed_data?.entities || [];
+      const org = orgsConfig[entities[0]?.sheetName];
+      if (org?.id) setOrgId(org.id);
+    }
+  }, []);
+
+  async function loadAccounts() {
+    if (!orgId) return setError('Select an org first.');
+    setAccountsLoading(true); setError('');
+    try {
+      const r = await fetch(`/api/accounts/${orgId}`, { headers: { 'x-auth-token': authToken } });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      setAccounts(d.accounts || []);
+    } catch (e) { setError(e.message); }
+    finally { setAccountsLoading(false); }
+  }
+
   async function sendApproval() {
     setLoading(true); setError('');
     try {
-      const r = await fetch(`/api/payroll-cases/${kase.id}/send-check-approval`, { method: 'POST', headers: { 'x-auth-token': authToken } });
+      const r = await fetch(`/api/payroll-cases/${kase.id}/send-check-approval`, {
+        method: 'POST',
+        headers: { 'x-auth-token': authToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orgId: orgId || undefined,
+          debitAccountId: debitAccount || undefined,
+          creditAccountId: creditAccount || undefined,
+        }),
+      });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error);
+      if (d.accrualResults) setAccrualResults(d.accrualResults);
       await onRefresh();
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
@@ -613,7 +650,8 @@ function Step3Panel({ kase, authToken, onRefresh }) {
 
   return (
     <div className="pf-panel-body">
-      <PanelHeader step={3} title="Approval Gate (Check)" subtitle="Sequential approval: First Reviewer → Final Approver." />
+      <PanelHeader step={3} title="Approval Gate (Check)"
+        subtitle="Select GL accounts to book payroll accrual, then send for approval." />
 
       <div className="pf-approver-chain">
         <ApproverBox name="Asim Subedi" role="First Reviewer"
@@ -626,13 +664,80 @@ function Step3Panel({ kase, authToken, onRefresh }) {
       </div>
 
       {canSend && (
-        <div className="pf-action-zone">
-          <p className="pf-action-desc">Send the check file to Ikhram Merican for first review. Approval email will be sent automatically.</p>
-          {error && <div className="error-msg">{error}</div>}
-          <button className="btn btn-primary" onClick={sendApproval} disabled={loading}>
-            {loading ? <><span className="spinner"/>&nbsp;Sending…</> : 'Send for Approval'}
-          </button>
-        </div>
+        <>
+          <div className="pf-detail-card" style={{ marginBottom: 16 }}>
+            <div className="pf-detail-card-title">
+              Zoho Accrual Booking — DR Salary Expense / CR Salary Payable (per consultant)
+            </div>
+            <div className="pf-gl-form" style={{ marginTop: 10 }}>
+              <div className="pf-form-section">
+                <label className="label">Organisation</label>
+                <select className="input" value={orgId} onChange={e => { setOrgId(e.target.value); setAccounts([]); }}>
+                  <option value="">— select org —</option>
+                  {orgs.map(o => <option key={o.id} value={o.id}>{o.label} ({o.name})</option>)}
+                </select>
+              </div>
+              <div className="pf-form-section" style={{ display: 'flex', alignItems: 'flex-end' }}>
+                <button className="btn btn-secondary" onClick={loadAccounts} disabled={accountsLoading || !orgId} style={{ width: '100%' }}>
+                  {accountsLoading ? <><span className="spinner"/>&nbsp;Loading…</> : 'Load GL Accounts'}
+                </button>
+              </div>
+            </div>
+            {accounts.length > 0 && (
+              <div className="pf-gl-form" style={{ marginTop: 12 }}>
+                <div className="pf-form-section">
+                  <label className="label">Debit — Salary Expense Account</label>
+                  <select className="input" value={debitAccount} onChange={e => setDebitAccount(e.target.value)}>
+                    <option value="">— select —</option>
+                    {accounts.map(a => <option key={a.id} value={a.id}>{a.type} — {a.name}</option>)}
+                  </select>
+                </div>
+                <div className="pf-form-section">
+                  <label className="label">Credit — Salary Payable Account</label>
+                  <select className="input" value={creditAccount} onChange={e => setCreditAccount(e.target.value)}>
+                    <option value="">— select —</option>
+                    {accounts.map(a => <option key={a.id} value={a.id}>{a.type} — {a.name}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
+            {(!orgId || accounts.length === 0) && (
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+                GL accounts optional — skip to send approval without Zoho booking.
+              </p>
+            )}
+          </div>
+
+          <div className="pf-action-zone">
+            <p className="pf-action-desc">
+              {debitAccount && creditAccount
+                ? `Will book ${(kase.check_data?.consultantCount || 0)} individual accrual entries in Zoho (DR Salary Expense / CR Salary Payable), then send approval email to Asim Subedi.`
+                : 'Send the check file for approval. Add GL accounts above to also book payroll accrual in Zoho simultaneously.'}
+            </p>
+            {error && <div className="error-msg">{error}</div>}
+            <button className="btn btn-primary" onClick={sendApproval} disabled={loading}>
+              {loading ? <><span className="spinner"/>&nbsp;Sending…</> : debitAccount && creditAccount ? 'Book Accrual & Send for Approval' : 'Send for Approval'}
+            </button>
+          </div>
+
+          {accrualResults && (
+            <div className="pf-detail-card" style={{ marginTop: 12 }}>
+              <div className="pf-detail-card-title">
+                Accrual Results — {accrualResults.filter(r=>r.success).length} posted · {accrualResults.filter(r=>!r.success).length} failed
+              </div>
+              <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+                {accrualResults.map((r, i) => (
+                  <div key={i} className="pf-log-row">
+                    <span style={{ color: r.success ? '#22c55e' : '#ef4444', fontWeight: 700 }}>{r.success ? '✓' : '✗'}</span>
+                    <span style={{ fontSize: 12, flex: 1 }}>{r.name}</span>
+                    {r.journalId && <span style={{ fontSize: 11, color: '#6366f1', fontFamily: 'monospace' }}>JV:{r.journalId}</span>}
+                    {r.error && <span style={{ fontSize: 11, color: '#ef4444' }}>{r.error}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {['check_approval_sent','check_reviewer_approved'].includes(kase.status) && (
@@ -938,9 +1043,7 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
   const [orgId, setOrgId] = useState('');
   const [accounts, setAccounts] = useState([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
-  const [debitAccount, setDebitAccount] = useState('');
-  const [creditAccount, setCreditAccount] = useState('');
-  const [expenseAccount, setExpenseAccount] = useState('');
+  const [payableAccount, setPayableAccount] = useState('');
   const [bankAccount, setBankAccount] = useState('');
   const [journalDate, setJournalDate] = useState('');
   const [posting, setPosting] = useState(false);
@@ -977,7 +1080,7 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
   }
 
   async function postToZoho() {
-    if (!orgId || !debitAccount || !creditAccount || !journalDate) return setError('All fields required.');
+    if (!orgId || !payableAccount || !bankAccount || !journalDate) return setError('All fields required.');
     setPosting(true); setError(''); setPostResults(null);
     const sheetName = entities[0]?.sheetName || kase.entity_name || kase.entity;
     try {
@@ -986,10 +1089,8 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
         headers: { 'x-auth-token': authToken, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           orgId, journalDate, sheetName,
-          debitAccountId: debitAccount,
-          creditAccountId: creditAccount,
-          expenseAccountId: expenseAccount || undefined,
-          bankAccountId: bankAccount || undefined,
+          payableAccountId: payableAccount,
+          bankAccountId: bankAccount,
         }),
       });
       const d = await r.json();
@@ -1020,8 +1121,8 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
 
   return (
     <div className="pf-panel-body">
-      <PanelHeader step={7} title="Zoho Books Posting"
-        subtitle={`Posts one journal entry per consultant (${allEmployees.length} consultants → ${allEmployees.length} journal entries).`} />
+      <PanelHeader step={7} title="Zoho Books — Payment Clearing"
+        subtitle={`Books DR Salary Payable / CR Bank per consultant (${allEmployees.length} expense entries).`} />
       {!canPost && <div className="pf-info-banner pf-banner-warning">Payment approval (Step 6) required before posting.</div>}
       {canPost && (
         <>
@@ -1048,15 +1149,15 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
           {accounts.length > 0 && (
             <div className="pf-gl-form" style={{ marginTop: 16 }}>
               <div className="pf-form-section">
-                <label className="label">Debit Account (Salary Expense)</label>
-                <select className="input" value={debitAccount} onChange={e => setDebitAccount(e.target.value)}>
+                <label className="label">Debit — Salary Payable Account</label>
+                <select className="input" value={payableAccount} onChange={e => setPayableAccount(e.target.value)}>
                   <option value="">— select —</option>
                   {accounts.map(a => <option key={a.id} value={a.id}>{a.type} — {a.name}</option>)}
                 </select>
               </div>
               <div className="pf-form-section">
-                <label className="label">Credit Account ({creditLabelForDate(journalDate)})</label>
-                <select className="input" value={creditAccount} onChange={e => setCreditAccount(e.target.value)}>
+                <label className="label">Credit — Bank / Cash Account</label>
+                <select className="input" value={bankAccount} onChange={e => setBankAccount(e.target.value)}>
                   <option value="">— select —</option>
                   {accounts.map(a => <option key={a.id} value={a.id}>{a.type} — {a.name}</option>)}
                 </select>
@@ -1089,21 +1190,21 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
             </div>
           )}
 
-          {debitAccount && creditAccount && (
+          {payableAccount && bankAccount && (
             <div className="pf-je-preview">
               <div className="pf-detail-card-title">
-                Per-Consultant Journal Preview — {allEmployees.length} entries
+                Payment Clearing Preview — {allEmployees.length} expense entries
               </div>
               <div className="pf-je-row" style={{ fontWeight: 600 }}>
-                <span>DR {accounts.find(a=>a.id===debitAccount)?.name || '…'}</span>
+                <span>DR {accounts.find(a=>a.id===payableAccount)?.name || 'Salary Payable'}</span>
                 <span>per consultant CTC</span>
               </div>
               <div className="pf-je-row pf-je-credit">
-                <span>CR {accounts.find(a=>a.id===creditAccount)?.name || creditLabelForDate(journalDate)}</span>
+                <span>CR {accounts.find(a=>a.id===bankAccount)?.name || 'Bank'}</span>
                 <span>per consultant CTC</span>
               </div>
               <div className="pf-je-narration">
-                e.g. {kase.type} Payroll – {kase.period} – [Consultant Name] ([Emp ID]) – Ref: {kase.reference}-[EmpID]
+                Ref: PMT-{kase.reference}-[EmpID] | Approved: {kase.payment_approved_by}
               </div>
             </div>
           )}
@@ -1131,11 +1232,11 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
 
           {error && <div className="error-msg" style={{ marginTop: 12 }}>{error}</div>}
           <button className="btn btn-primary btn-lg" onClick={postToZoho}
-            disabled={posting || !orgId || !debitAccount || !creditAccount || !journalDate}
+            disabled={posting || !orgId || !payableAccount || !bankAccount || !journalDate}
             style={{ marginTop: 16 }}>
             {posting
-              ? <><span className="spinner"/>&nbsp;Posting {allEmployees.length} entries…</>
-              : `Post ${allEmployees.length} Journal Entries to Zoho`}
+              ? <><span className="spinner"/>&nbsp;Booking {allEmployees.length} payment entries…</>
+              : `Book ${allEmployees.length} Payment Entries to Zoho`}
           </button>
         </>
       )}
