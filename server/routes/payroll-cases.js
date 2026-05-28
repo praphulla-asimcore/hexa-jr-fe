@@ -1099,7 +1099,7 @@ router.post('/:id/confirm-payment', requireAuth, async (req, res) => {
   res.json({ confirmed: true });
 });
 
-// ─── Step 7: Post to Zoho Books ───────────────────────────────────────────────
+// ─── Step 7: Post to Zoho Books — one journal entry per consultant ────────────
 
 router.post('/:id/post-zoho', requireAuth, async (req, res) => {
   const db = getDb();
@@ -1110,96 +1110,112 @@ router.post('/:id/post-zoho', requireAuth, async (req, res) => {
   if (kase.status !== 'payment_approved') return res.status(409).json({ error: `Zoho posting requires payment approval. Status: ${kase.status}` });
   if (!kase.check_approval_cert || !kase.payment_approval_cert) return res.status(409).json({ error: 'Both approval certificates must exist.' });
 
-  const { orgId, journalDate, lineItems, sheetName, expenseAccountId, bankAccountId } = req.body;
-  if (!orgId || !journalDate || !lineItems?.length || !sheetName) {
-    return res.status(400).json({ error: 'orgId, journalDate, sheetName, and lineItems are required.' });
+  const { orgId, journalDate, debitAccountId, creditAccountId, sheetName, expenseAccountId, bankAccountId } = req.body;
+  if (!orgId || !journalDate || !debitAccountId || !creditAccountId || !sheetName) {
+    return res.status(400).json({ error: 'orgId, journalDate, debitAccountId, creditAccountId, and sheetName are required.' });
   }
 
   const now = new Date().toISOString();
-  const narration = `${kase.type} Payroll – ${kase.period} – ${kase.entity_name || kase.entity} – Ref: ${kase.reference} – Approved: ${kase.payment_approved_by} – Posted: ${now}`;
-
   const round2local = (n) => Math.round(parseFloat(n) * 100) / 100;
-  const totalDebit = lineItems.filter(l => l.debit_or_credit === 'debit').reduce((s, l) => s + l.amount, 0);
-  const totalCredit = lineItems.filter(l => l.debit_or_credit === 'credit').reduce((s, l) => s + l.amount, 0);
 
-  if (Math.abs(totalDebit - totalCredit) > 0.01) {
-    return res.status(422).json({ error: `Debits (${totalDebit.toFixed(2)}) ≠ credits (${totalCredit.toFixed(2)}).` });
+  // Flatten all employees from all entities
+  const entities = kase.parsed_data?.entities || [];
+  const allEmployees = entities.flatMap(ent =>
+    ent.employees.map(emp => ({ ...emp, entityName: ent.sheetName }))
+  );
+
+  if (!allEmployees.length) return res.status(400).json({ error: 'No employee data found in case.' });
+
+  // Post one journal entry per consultant (sequential to respect Zoho rate limits)
+  const results = [];
+  for (const emp of allEmployees) {
+    const empRef = `${kase.reference}-${emp.employeeId}`;
+    const narration = `${kase.type} Payroll – ${kase.period} – ${emp.name} (${emp.employeeId}) – Ref: ${empRef} – Approved: ${kase.payment_approved_by} – Posted: ${now}`;
+    const amount = round2local(emp.ctcHexa);
+
+    try {
+      const journal = await postJournalEntry(orgId, {
+        journal_date: journalDate,
+        reference_number: empRef,
+        notes: narration,
+        line_items: [
+          { account_id: debitAccountId,  debit_or_credit: 'debit',  amount, description: `${emp.name} – ${emp.costCentre} – ${kase.period}` },
+          { account_id: creditAccountId, debit_or_credit: 'credit', amount, description: `${emp.name} – ${emp.costCentre} – ${kase.period}` },
+        ],
+      });
+      results.push({ employeeId: emp.employeeId, name: emp.name, amount, journalId: journal?.journal_id, success: true });
+    } catch (err) {
+      results.push({ employeeId: emp.employeeId, name: emp.name, amount, error: err.message, success: false });
+    }
   }
 
-  let journal;
-  try {
-    journal = await postJournalEntry(orgId, {
-      journal_date: journalDate,
-      reference_number: kase.reference,
-      notes: narration,
-      line_items: lineItems.map(l => ({ account_id: l.account_id, debit_or_credit: l.debit_or_credit, amount: round2local(l.amount), description: l.description })),
-    });
-  } catch (err) {
-    return res.status(502).json({ error: err.message });
+  const posted = results.filter(r => r.success);
+  const failed = results.filter(r => !r.success);
+  const journalIds = posted.map(r => r.journalId).filter(Boolean);
+
+  // If all failed, return error without marking as posted
+  if (!posted.length) {
+    return res.status(502).json({ error: 'All journal entries failed.', results });
   }
 
-  // Auto-attach Check Report PDF + Audit Package PDF to the Zoho journal
-  if (journal?.journal_id) {
+  // Attach Check Report PDF + Audit Package PDF to the first journal
+  if (journalIds[0]) {
     try {
       const { data: logRows } = await db.from('payroll_audit_log')
         .select('*').eq('case_id', kase.id).order('created_at', { ascending: true });
-
       const checkPdf = await buildCheckReportPdf(kase);
       const auditPdf = await buildAuditPackagePdf(kase, logRows || []);
-
-      await attachJournalDocument(orgId, journal.journal_id, checkPdf,
-        `CheckReport-${kase.reference}.pdf`, 'application/pdf');
-      await attachJournalDocument(orgId, journal.journal_id, auditPdf,
-        `AuditPackage-${kase.reference}.pdf`, 'application/pdf');
+      await attachJournalDocument(orgId, journalIds[0], checkPdf, `CheckReport-${kase.reference}.pdf`, 'application/pdf');
+      await attachJournalDocument(orgId, journalIds[0], auditPdf, `AuditPackage-${kase.reference}.pdf`, 'application/pdf');
     } catch (attachErr) {
       console.error('Zoho attachment error (non-fatal):', attachErr.message);
     }
   }
 
-  // Optionally book Zoho expense (bank payment entry: DR Salary Payable / CR Bank)
-  let expenseId = null;
-  if (expenseAccountId && bankAccountId && kase.check_data?.ctcTotal) {
-    try {
-      const expense = await createExpense(orgId, {
-        account_id: expenseAccountId,
-        paid_through_account_id: bankAccountId,
-        date: journalDate,
-        amount: round2local(kase.check_data.ctcTotal),
-        description: narration,
-        reference_number: kase.reference,
-        currency_code: 'MYR',
-        exchange_rate: 1,
-        is_billable: false,
-      });
-      expenseId = expense?.expense_id;
-    } catch (expErr) {
-      console.error('Zoho expense error (non-fatal):', expErr.message);
+  // Optionally book Zoho expense per consultant (DR Salary Payable / CR Bank)
+  if (expenseAccountId && bankAccountId) {
+    for (const emp of allEmployees) {
+      try {
+        await createExpense(orgId, {
+          account_id: expenseAccountId,
+          paid_through_account_id: bankAccountId,
+          date: journalDate,
+          amount: round2local(emp.ctcHexa),
+          description: `${kase.type} Salary – ${emp.name} (${emp.employeeId}) – ${kase.period} – Ref: ${kase.reference}`,
+          reference_number: `${kase.reference}-${emp.employeeId}`,
+          currency_code: 'MYR', exchange_rate: 1, is_billable: false,
+        });
+      } catch (expErr) {
+        console.error(`Expense error for ${emp.name} (non-fatal):`, expErr.message);
+      }
     }
   }
 
   await db.from('payroll_cases').update({
     status: 'zoho_posted', zoho_org_id: orgId,
-    zoho_journal_ids: [journal?.journal_id, expenseId].filter(Boolean),
+    zoho_journal_ids: journalIds,
     zoho_posted_at: now, zoho_posted_by: req.user.name || req.user.email,
     audit_assembled_at: now,
   }).eq('id', kase.id);
 
-  // Also record in journal_posts for dashboard stats
+  // Record summary in journal_posts for dashboard
   try {
     await db.from('journal_posts').insert({
       module: kase.type.toLowerCase(), entity: sheetName, org_id: orgId,
-      journal_id: journal?.journal_id, reference_number: kase.reference,
-      journal_date: journalDate, total_amount: round2local(totalDebit),
-      notes: narration, posted_by_email: req.user.email, posted_by_name: req.user.name || req.user.email,
+      journal_id: journalIds[0], reference_number: kase.reference,
+      journal_date: journalDate,
+      total_amount: round2local(allEmployees.reduce((s, e) => s + e.ctcHexa, 0)),
+      notes: `${kase.type} Payroll – ${kase.period} – ${kase.entity_name || kase.entity} – Ref: ${kase.reference} – ${posted.length} consultants posted`,
+      posted_by_email: req.user.email, posted_by_name: req.user.name || req.user.email,
     });
   } catch (_) {}
 
   await auditLog(db, kase.id, 'ZOHO_POSTED', req.user.name || req.user.email, String(req.user.id || ''), getIp(req), {
-    journalId: journal?.journal_id, orgId,
-    stamp: `Posted by: System API | Initiated by: ${req.user.name} | Zoho Journal No: ${journal?.journal_id} | Date-Time: ${now}`,
+    journalIds, posted: posted.length, failed: failed.length, orgId,
+    stamp: `Posted by: System API | Initiated by: ${req.user.name} | ${posted.length} journals | Ref: ${kase.reference} | Date-Time: ${now}`,
   });
 
-  res.json({ journalId: journal?.journal_id, referenceNumber: kase.reference });
+  res.json({ posted: posted.length, failed: failed.length, results, referenceNumber: kase.reference });
 });
 
 // ─── Delete case (only if not completed) ─────────────────────────────────────

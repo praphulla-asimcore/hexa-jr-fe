@@ -933,7 +933,7 @@ function Step6Panel({ kase, authToken, onRefresh }) {
   );
 }
 
-// Step 7 — Zoho Posting (with GL selection)
+// Step 7 — Zoho Posting — one journal entry per consultant
 function Step7Panel({ kase, authToken, user, onRefresh }) {
   const [orgId, setOrgId] = useState('');
   const [accounts, setAccounts] = useState([]);
@@ -944,28 +944,23 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
   const [bankAccount, setBankAccount] = useState('');
   const [journalDate, setJournalDate] = useState('');
   const [posting, setPosting] = useState(false);
+  const [postResults, setPostResults] = useState(null);
   const [error, setError] = useState('');
   const isDone = kase.status === 'zoho_posted';
   const canPost = kase.status === 'payment_approved';
 
   const entities = kase.parsed_data?.entities || [];
   const check = kase.check_data || {};
+  const allEmployees = entities.flatMap(e => e.employees.map(emp => ({ ...emp, entityName: e.sheetName })));
 
-  // Detect org from entity name
   useEffect(() => {
     if (!orgId && entities.length) {
-      const ent = entities[0];
-      const org = orgsConfig[ent.sheetName];
+      const org = orgsConfig[entities[0].sheetName];
       if (org?.id) setOrgId(org.id);
     }
     if (!journalDate) {
-      // Use stored payment date if available, otherwise default to end of period
-      if (kase.payment_date) {
-        setJournalDate(kase.payment_date);
-      } else {
-        const p = kase.period;
-        if (p?.length === 6) setJournalDate(`${p.slice(0, 4)}-${p.slice(4, 6)}-28`);
-      }
+      if (kase.payment_date) setJournalDate(kase.payment_date);
+      else { const p = kase.period; if (p?.length === 6) setJournalDate(`${p.slice(0,4)}-${p.slice(4,6)}-28`); }
     }
   }, []);
 
@@ -983,37 +978,23 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
 
   async function postToZoho() {
     if (!orgId || !debitAccount || !creditAccount || !journalDate) return setError('All fields required.');
-    setPosting(true); setError('');
-
-    const creditLabel = creditLabelForDate(journalDate);
-    const monLabel = fmtMonYear(journalDate);
-    const monShort = shortMonYear(journalDate);
-    const entity = entities[0];
-    const sheetName = entity?.sheetName || kase.entity_name || kase.entity;
-
-    const debitAcc = accounts.find(a => a.id === debitAccount) || { id: debitAccount, name: 'Consultant Salaries' };
-    const creditAcc = accounts.find(a => a.id === creditAccount) || { id: creditAccount, name: creditLabel };
-
-    const lineItems = [
-      { account_id: debitAcc.id, debit_or_credit: 'debit', amount: check.ctcTotal || 0, description: `${kase.type} Salaries — ${monLabel}` },
-      ...(entity?.employees || []).map(emp => ({
-        account_id: creditAcc.id, debit_or_credit: 'credit', amount: emp.ctcHexa,
-        description: `${emp.name}_${emp.costCentre}_${monShort}`,
-      })),
-    ];
-
+    setPosting(true); setError(''); setPostResults(null);
+    const sheetName = entities[0]?.sheetName || kase.entity_name || kase.entity;
     try {
       const r = await fetch(`/api/payroll-cases/${kase.id}/post-zoho`, {
         method: 'POST',
         headers: { 'x-auth-token': authToken, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          orgId, journalDate, sheetName, lineItems,
+          orgId, journalDate, sheetName,
+          debitAccountId: debitAccount,
+          creditAccountId: creditAccount,
           expenseAccountId: expenseAccount || undefined,
           bankAccountId: bankAccount || undefined,
         }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error);
+      setPostResults(d);
       await onRefresh();
     } catch (e) { setError(e.message); }
     finally { setPosting(false); }
@@ -1021,10 +1002,13 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
 
   if (isDone) return (
     <div className="pf-panel-body">
-      <PanelHeader step={7} title="Zoho Books Posting" subtitle="Journal entry posted and linked to case." />
-      <div className="pf-info-banner pf-banner-ok">Posted to Zoho Books successfully.</div>
+      <PanelHeader step={7} title="Zoho Books Posting" subtitle={`${(kase.zoho_journal_ids||[]).length} individual journal entries posted.`} />
+      <div className="pf-info-banner pf-banner-ok">
+        Posted {(kase.zoho_journal_ids||[]).length} journal entries to Zoho Books.
+      </div>
       <div className="pf-info-grid">
-        <StampBox label="Zoho Journal ID" value={(kase.zoho_journal_ids || [])[0] || '—'} />
+        <StampBox label="Journals posted" value={(kase.zoho_journal_ids||[]).length} />
+        <StampBox label="First journal ID" value={(kase.zoho_journal_ids||[])[0] || '—'} />
         <StampBox label="Posted by" value={kase.zoho_posted_by} />
         <StampBox label="Date-Time" value={fmtDate(kase.zoho_posted_at)} />
         <StampBox label="Reference" value={kase.reference} />
@@ -1036,7 +1020,8 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
 
   return (
     <div className="pf-panel-body">
-      <PanelHeader step={7} title="Zoho Books Posting" subtitle="Requires both approval certificates. Select GL accounts and post." />
+      <PanelHeader step={7} title="Zoho Books Posting"
+        subtitle={`Posts one journal entry per consultant (${allEmployees.length} consultants → ${allEmployees.length} journal entries).`} />
       {!canPost && <div className="pf-info-banner pf-banner-warning">Payment approval (Step 6) required before posting.</div>}
       {canPost && (
         <>
@@ -1104,17 +1089,53 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
             </div>
           )}
 
-          <div className="pf-je-preview">
-            <div className="pf-detail-card-title">Journal Entry Preview</div>
-            <div className="pf-je-row"><span>DR {debitAccount ? accounts.find(a=>a.id===debitAccount)?.name || '…' : '—'}</span><span>{fmtRM(check.ctcTotal)}</span></div>
-            <div className="pf-je-row pf-je-credit"><span>CR {creditAccount ? accounts.find(a=>a.id===creditAccount)?.name || '…' : `${creditLabelForDate(journalDate)} (×${entities[0]?.employees?.length || 0} lines)`}</span><span>{fmtRM(check.ctcTotal)}</span></div>
-            <div className="pf-je-narration">Narration: {kase.type} Payroll – {kase.period} – {kase.entity_name || kase.entity} – Ref: {kase.reference}</div>
-          </div>
+          {debitAccount && creditAccount && (
+            <div className="pf-je-preview">
+              <div className="pf-detail-card-title">
+                Per-Consultant Journal Preview — {allEmployees.length} entries
+              </div>
+              <div className="pf-je-row" style={{ fontWeight: 600 }}>
+                <span>DR {accounts.find(a=>a.id===debitAccount)?.name || '…'}</span>
+                <span>per consultant CTC</span>
+              </div>
+              <div className="pf-je-row pf-je-credit">
+                <span>CR {accounts.find(a=>a.id===creditAccount)?.name || creditLabelForDate(journalDate)}</span>
+                <span>per consultant CTC</span>
+              </div>
+              <div className="pf-je-narration">
+                e.g. {kase.type} Payroll – {kase.period} – [Consultant Name] ([Emp ID]) – Ref: {kase.reference}-[EmpID]
+              </div>
+            </div>
+          )}
 
-          {error && <div className="error-msg">{error}</div>}
+          {postResults && (
+            <div className="pf-detail-card" style={{ marginTop: 16 }}>
+              <div className="pf-detail-card-title">
+                Posting Results — {postResults.posted} posted · {postResults.failed} failed
+              </div>
+              <div style={{ maxHeight: 260, overflowY: 'auto' }}>
+                {(postResults.results || []).map((r, i) => (
+                  <div key={i} className="pf-log-row">
+                    <span className={`pf-log-event`} style={{ color: r.success ? '#22c55e' : '#ef4444' }}>
+                      {r.success ? '✓' : '✗'}
+                    </span>
+                    <span style={{ fontSize: 12, flex: 1 }}>{r.name} ({r.employeeId})</span>
+                    <span style={{ fontSize: 12, color: '#64748b' }}>{fmtRM(r.amount)}</span>
+                    {r.journalId && <span style={{ fontSize: 11, color: '#6366f1', fontFamily: 'monospace' }}>JV:{r.journalId}</span>}
+                    {r.error && <span style={{ fontSize: 11, color: '#ef4444' }}>{r.error}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {error && <div className="error-msg" style={{ marginTop: 12 }}>{error}</div>}
           <button className="btn btn-primary btn-lg" onClick={postToZoho}
-            disabled={posting || !orgId || !debitAccount || !creditAccount || !journalDate}>
-            {posting ? <><span className="spinner"/>&nbsp;Posting…</> : 'Post to Zoho Books'}
+            disabled={posting || !orgId || !debitAccount || !creditAccount || !journalDate}
+            style={{ marginTop: 16 }}>
+            {posting
+              ? <><span className="spinner"/>&nbsp;Posting {allEmployees.length} entries…</>
+              : `Post ${allEmployees.length} Journal Entries to Zoho`}
           </button>
         </>
       )}
