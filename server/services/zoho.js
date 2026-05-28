@@ -137,9 +137,41 @@ async function createExpense(orgId, payload) {
   }
 }
 
+async function attachJournalDocument(orgId, journalId, fileBuffer, filename, mimeType) {
+  const token = await getAccessToken();
+  const tld = getZohoDomain();
+  const url = `https://www.zohoapis.${tld}/books/v3/journals/${journalId}/documents`;
+
+  // Build multipart form manually (avoid form-data dep)
+  const boundary = `----ZohoFormBoundary${Date.now()}`;
+  const disposition = `Content-Disposition: form-data; name="attachment"; filename="${filename}"`;
+  const contentType = `Content-Type: ${mimeType}`;
+  const parts = [
+    `--${boundary}\r\n${disposition}\r\n${contentType}\r\n\r\n`,
+    fileBuffer,
+    `\r\n--${boundary}--\r\n`,
+  ];
+  const body = Buffer.concat(parts.map(p => Buffer.isBuffer(p) ? p : Buffer.from(p)));
+
+  try {
+    const response = await axios.post(url, body, {
+      headers: {
+        Authorization: `Zoho-oauthtoken ${token}`,
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      },
+      params: { organization_id: String(orgId).trim() },
+    });
+    const data = response.data;
+    if (data.code !== 0) throw new Error(`Zoho attach error [${data.code}]: ${data.message}`);
+    return data;
+  } catch (err) {
+    throw zohoError('attach document', err);
+  }
+}
+
 function clearTokenCache() {
   cachedToken = null;
   tokenExpiry = 0;
 }
 
-module.exports = { getAccessToken, fetchAccounts, postJournalEntry, createExpense, clearTokenCache };
+module.exports = { getAccessToken, fetchAccounts, postJournalEntry, createExpense, attachJournalDocument, clearTokenCache };

@@ -66,6 +66,7 @@ function stepState(stepNum, kase) {
     7: ['zoho_posted'],
     8: ['zoho_posted'],
     9: [],
+    10: true,
   };
   if (stepNum === 1) return 'done';
   const doneList = DONE_AFTER[stepNum];

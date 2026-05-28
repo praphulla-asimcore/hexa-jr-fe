@@ -6,7 +6,7 @@ const XLSX = require('xlsx');
 const { Resend } = require('resend');
 const { getDb } = require('../services/db');
 const { parseExcelBuffer } = require('../services/parser');
-const { postJournalEntry, createExpense } = require('../services/zoho');
+const { postJournalEntry, createExpense, attachJournalDocument } = require('../services/zoho');
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'hexa-jwt-secret-change-in-prod';
@@ -138,6 +138,219 @@ function matchConsultant(emp, airtableList) {
 }
 
 function pad(n) { return String(n).padStart(2, '0'); }
+
+const PDFDocument = require('pdfkit');
+
+function bufferFromPdfStream(doc) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    doc.on('data', c => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+    doc.end();
+  });
+}
+
+function pdfHeader(doc, title, ref) {
+  doc.fontSize(18).fillColor('#6366f1').text('Hexamatics Finance', { align: 'left' });
+  doc.moveDown(0.3);
+  doc.fontSize(13).fillColor('#111').text(title);
+  doc.fontSize(9).fillColor('#64748b').text(`Ref: ${ref}  ·  Generated: ${new Date().toISOString()}`);
+  doc.moveDown(0.5);
+  doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor('#6366f1').lineWidth(1.5).stroke();
+  doc.moveDown(0.5);
+}
+
+function pdfRow(doc, label, value, opts = {}) {
+  const y = doc.y;
+  doc.fontSize(9).fillColor('#64748b').text(label, doc.page.margins.left, y, { width: 160 });
+  doc.fontSize(9).fillColor(opts.color || '#111').text(String(value ?? '—'), doc.page.margins.left + 165, y);
+  doc.moveDown(0.35);
+}
+
+function pdfSection(doc, title) {
+  doc.moveDown(0.4);
+  doc.fontSize(10).fillColor('#6366f1').text(title.toUpperCase(), { characterSpacing: 0.5 });
+  doc.moveDown(0.3);
+}
+
+function fmtRMpdf(n) {
+  if (n == null) return '—';
+  return 'RM ' + Number(n).toLocaleString('en-MY', { minimumFractionDigits: 2 });
+}
+
+async function buildCheckReportPdf(kase) {
+  const doc = new PDFDocument({ margin: 40, size: 'A4' });
+  const check = kase.check_data || {};
+  const entities = kase.parsed_data?.entities || [];
+
+  pdfHeader(doc, 'Payroll Check Report', kase.reference);
+
+  pdfSection(doc, 'Case Details');
+  pdfRow(doc, 'Reference', kase.reference);
+  pdfRow(doc, 'Type', kase.type);
+  pdfRow(doc, 'Entity', kase.entity_name || kase.entity);
+  pdfRow(doc, 'Period', kase.period);
+  pdfRow(doc, 'Payment Date', kase.payment_date || '—');
+  pdfRow(doc, 'Uploaded by', kase.uploaded_by_name);
+  pdfRow(doc, 'Upload Timestamp', kase.uploaded_at);
+  pdfRow(doc, 'File Hash (SHA-256)', kase.original_file_hash || '—');
+
+  pdfSection(doc, 'Payroll Summary');
+  pdfRow(doc, 'Consultants', check.consultantCount);
+  pdfRow(doc, 'Gross Payroll', fmtRMpdf(check.grossPayrollTotal));
+  pdfRow(doc, 'Net Salary Total', fmtRMpdf(check.netSalaryTotal));
+  pdfRow(doc, 'Total CTC (Hexa)', fmtRMpdf(check.ctcTotal));
+
+  pdfSection(doc, 'Statutory Breakdown');
+  pdfRow(doc, 'EPF (Employer)', fmtRMpdf(check.statutory?.epf));
+  pdfRow(doc, 'EIS (Employer)', fmtRMpdf(check.statutory?.eis));
+  pdfRow(doc, 'SOCSO (Employer)', fmtRMpdf(check.statutory?.socso));
+  pdfRow(doc, 'HRDF', fmtRMpdf(check.statutory?.hrdf));
+  pdfRow(doc, 'MTD / PCB', fmtRMpdf(check.statutory?.mtd));
+
+  pdfSection(doc, `Exceptions (${check.flagCount || 0} flags)`);
+  if (!check.flagCount) {
+    doc.fontSize(9).fillColor('#166534').text('✓ No exceptions — all checks passed.');
+    doc.moveDown(0.3);
+  } else {
+    for (const f of (check.flags || [])) {
+      doc.fontSize(9).fillColor('#991b1b').text(`⚠ ${f.code}${f.employee ? ` — ${f.employee}` : ''}${f.entity ? ` (${f.entity})` : ''}${f.diff ? `  Δ ${fmtRMpdf(f.diff)}` : ''}`);
+      doc.moveDown(0.25);
+    }
+  }
+
+  pdfSection(doc, 'Approval Stamps');
+  pdfRow(doc, 'Check Reviewer', kase.check_reviewer_name || '—');
+  pdfRow(doc, 'Reviewer Approved', kase.check_reviewer_approved_at || '—');
+  pdfRow(doc, 'Final Approver', kase.check_final_approver_name || '—');
+  pdfRow(doc, 'Final Approved', kase.check_approved_at || '—');
+  if (kase.check_approval_cert?.stamp) {
+    doc.moveDown(0.3);
+    doc.fontSize(8).fillColor('#475569').text(kase.check_approval_cert.stamp, { lineGap: 2 });
+    doc.moveDown(0.3);
+  }
+  pdfRow(doc, 'Payment Approved by', kase.payment_approved_by || '—');
+  pdfRow(doc, 'Payment Approved at', kase.payment_approved_at || '—');
+  if (kase.payment_approval_cert?.stamp) {
+    doc.moveDown(0.3);
+    doc.fontSize(8).fillColor('#475569').text(kase.payment_approval_cert.stamp, { lineGap: 2 });
+    doc.moveDown(0.3);
+  }
+
+  // Consultant list (new page)
+  doc.addPage();
+  pdfHeader(doc, 'Consultant Detail List', kase.reference);
+
+  const colX = [40, 80, 130, 215, 285, 340, 390, 440, 490, 540];
+  const colW = [35, 45, 80, 65, 50, 45, 45, 45, 45, 45];
+  const headers = ['#', 'Emp ID', 'Name', 'Entity', 'Gross', 'Net', 'CTC', 'EPF', 'MTD', 'Cost Ctr'];
+
+  // Table header
+  doc.fontSize(8).fillColor('#fff');
+  doc.rect(40, doc.y, 515, 14).fill('#6366f1');
+  headers.forEach((h, i) => doc.fillColor('#fff').text(h, colX[i], doc.y - 12, { width: colW[i] }));
+  doc.moveDown(0.1);
+
+  let rowNum = 1;
+  for (const ent of entities) {
+    for (const emp of ent.employees) {
+      if (doc.y > 760) { doc.addPage(); }
+      const bg = rowNum % 2 === 0 ? '#f8fafc' : '#fff';
+      const rowY = doc.y;
+      doc.rect(40, rowY, 515, 13).fill(bg);
+      doc.fillColor('#111');
+      [rowNum, emp.employeeId, emp.name.slice(0, 18), ent.sheetName.slice(0, 12),
+        fmtRMpdf(emp.grossSalary), fmtRMpdf(emp.netSalary), fmtRMpdf(emp.ctcHexa),
+        fmtRMpdf(emp.epfEmployer), fmtRMpdf(emp.mtd), emp.costCentre.slice(0, 10)
+      ].forEach((v, i) => doc.fontSize(7).text(String(v), colX[i], rowY + 2, { width: colW[i] }));
+      doc.moveDown(0.15);
+      rowNum++;
+    }
+  }
+
+  // Totals row
+  doc.moveDown(0.2);
+  doc.fontSize(8).fillColor('#6366f1').text(`TOTAL  ${fmtRMpdf(check.grossPayrollTotal)} gross  |  ${fmtRMpdf(check.netSalaryTotal)} net  |  ${fmtRMpdf(check.ctcTotal)} CTC`);
+
+  return bufferFromPdfStream(doc);
+}
+
+async function buildAuditPackagePdf(kase, logs) {
+  const doc = new PDFDocument({ margin: 40, size: 'A4' });
+  const check = kase.check_data || {};
+
+  pdfHeader(doc, `Audit Package — ${kase.reference}`, kase.reference);
+
+  doc.fontSize(9).fillColor('#64748b').text(`Retention: 7 years  ·  Read-only  ·  Append-only storage  ·  ${new Date().toISOString()}`);
+  doc.moveDown(0.5);
+
+  pdfSection(doc, 'Case Overview');
+  pdfRow(doc, 'Reference', kase.reference);
+  pdfRow(doc, 'Type', kase.type);
+  pdfRow(doc, 'Entity', kase.entity_name || kase.entity);
+  pdfRow(doc, 'Period', kase.period);
+  pdfRow(doc, 'Payment Date', kase.payment_date || '—');
+  pdfRow(doc, 'Status', kase.status);
+  pdfRow(doc, 'Consultants', check.consultantCount);
+  pdfRow(doc, 'Total CTC', fmtRMpdf(check.ctcTotal));
+
+  pdfSection(doc, 'Document Registry');
+  const docs = [
+    ['1', 'Original File', kase.original_file_name || '—', kase.original_file_hash ? kase.original_file_hash.slice(0, 32) + '…' : ''],
+    ['2', 'AI Check File', kase.check_generated_at || '—', `Flags: ${check.flagCount || 0}`],
+    ['3', 'Check Approval Certificate', kase.check_approved_at || '—', kase.check_approval_cert?.stamp?.slice(0, 60) || ''],
+    ['4', 'Bank Upload File (RCMS XLSX)', kase.bank_file_name || '—', kase.bank_file_hash ? kase.bank_file_hash.slice(0, 32) + '…' : ''],
+    ['5', 'RCgen Payment TXT', kase.bank_receipt_name || '—', ''],
+    ['6', 'Bank Upload Log', kase.bank_upload_at ? `By: ${kase.bank_upload_by}  Ref: ${kase.bank_portal_ref}` : '—', ''],
+    ['7', 'Payment Approval Certificate', kase.payment_approved_at || '—', kase.payment_approval_cert?.stamp?.slice(0, 60) || ''],
+    ['8', 'Zoho Journal', (kase.zoho_journal_ids || [])[0] || '—', kase.zoho_posted_at || ''],
+    ['9', 'Audit Log', `${logs.length} events`, ''],
+  ];
+
+  for (const [num, name, detail, stamp] of docs) {
+    const done = detail !== '—' && detail !== '';
+    doc.fontSize(9).fillColor(done ? '#166534' : '#94a3b8').text(`${done ? '✓' : '○'}  ${num}. ${name}`, { continued: false });
+    if (detail && detail !== '—') {
+      doc.fontSize(8).fillColor('#374151').text(`   ${detail}`, { indent: 16 });
+    }
+    if (stamp) doc.fontSize(7).fillColor('#64748b').text(`   ${stamp}`, { indent: 16 });
+    doc.moveDown(0.2);
+  }
+
+  pdfSection(doc, 'Check Approval Certificate');
+  if (kase.check_approval_cert) {
+    for (const [k, v] of Object.entries(kase.check_approval_cert)) {
+      if (typeof v !== 'object') pdfRow(doc, k, v);
+    }
+  }
+
+  pdfSection(doc, 'Payment Approval Certificate');
+  if (kase.payment_approval_cert) {
+    for (const [k, v] of Object.entries(kase.payment_approval_cert)) {
+      if (typeof v !== 'object') pdfRow(doc, k, v);
+    }
+  }
+
+  // Audit log (new page)
+  doc.addPage();
+  pdfHeader(doc, 'Immutable Audit Log', kase.reference);
+  doc.fontSize(9).fillColor('#374151').text(`${logs.length} events recorded`);
+  doc.moveDown(0.4);
+
+  for (const l of logs) {
+    if (doc.y > 760) doc.addPage();
+    doc.fontSize(8).fillColor('#6366f1').text(l.event_type, { continued: true });
+    doc.fillColor('#374151').text(`  —  ${l.performed_by || 'System'}`, { continued: true });
+    doc.fillColor('#94a3b8').text(`  ${l.created_at || ''}  ${l.ip_address ? `[${l.ip_address}]` : ''}`);
+    if (l.metadata?.stamp) {
+      doc.fontSize(7).fillColor('#64748b').text(`   ${l.metadata.stamp}`, { lineGap: 1 });
+    }
+    doc.moveDown(0.2);
+  }
+
+  return bufferFromPdfStream(doc);
+}
 
 async function generateAndStoreBankFiles(kase, db, triggeredBy) {
   const entities = kase.parsed_data?.entities || [];
@@ -923,6 +1136,24 @@ router.post('/:id/post-zoho', requireAuth, async (req, res) => {
     });
   } catch (err) {
     return res.status(502).json({ error: err.message });
+  }
+
+  // Auto-attach Check Report PDF + Audit Package PDF to the Zoho journal
+  if (journal?.journal_id) {
+    try {
+      const { data: logRows } = await db.from('payroll_audit_log')
+        .select('*').eq('case_id', kase.id).order('created_at', { ascending: true });
+
+      const checkPdf = await buildCheckReportPdf(kase);
+      const auditPdf = await buildAuditPackagePdf(kase, logRows || []);
+
+      await attachJournalDocument(orgId, journal.journal_id, checkPdf,
+        `CheckReport-${kase.reference}.pdf`, 'application/pdf');
+      await attachJournalDocument(orgId, journal.journal_id, auditPdf,
+        `AuditPackage-${kase.reference}.pdf`, 'application/pdf');
+    } catch (attachErr) {
+      console.error('Zoho attachment error (non-fatal):', attachErr.message);
+    }
   }
 
   // Optionally book Zoho expense (bank payment entry: DR Salary Payable / CR Bank)
