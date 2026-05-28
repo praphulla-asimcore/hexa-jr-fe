@@ -36,6 +36,15 @@
 }
 .pf-ref-large { font-size: 15px; }
 
+.pf-delete-btn {
+  margin-left: auto;
+  background: none; border: 1px solid transparent; border-radius: 6px;
+  padding: 3px 6px; cursor: pointer; color: var(--text-muted);
+  display: flex; align-items: center;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.pf-delete-btn:hover { color: #ef4444; border-color: #fca5a5; background: #fef2f2; }
+
 .pf-case-meta { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-muted); margin-bottom: 4px; }
 .pf-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
 .pf-case-by { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }

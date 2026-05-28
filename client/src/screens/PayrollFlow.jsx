@@ -148,9 +148,17 @@ export default function PayrollFlow({ module, authToken, user }) {
     if (d.case) setActiveCase(d);
   }
 
+  async function deleteCase(c) {
+    if (!window.confirm(`Delete ${c.reference}? This cannot be undone.`)) return;
+    try {
+      await fetch(`/api/payroll-cases/${c.id}`, { method: 'DELETE', headers });
+      await loadCases();
+    } catch (_) {}
+  }
+
   if (view === 'list') return (
     <CaseList type={type} cases={cases} loading={listLoading}
-      onNew={() => setView('new')} onOpen={openCase} module={module} />
+      onNew={() => setView('new')} onOpen={openCase} onDelete={deleteCase} module={module} />
   );
   if (view === 'new') return (
     <NewCaseForm type={type} authToken={authToken} user={user}
@@ -166,7 +174,7 @@ export default function PayrollFlow({ module, authToken, user }) {
 
 // ─── Case List ────────────────────────────────────────────────────────────────
 
-function CaseList({ type, cases, loading, onNew, onOpen, module }) {
+function CaseList({ type, cases, loading, onNew, onOpen, onDelete, module }) {
   const label = module === 'csi' ? 'CSI' : 'Payroll';
   return (
     <div className="pf-screen fade-in">
@@ -199,6 +207,17 @@ function CaseList({ type, cases, loading, onNew, onOpen, module }) {
                 <div className="pf-case-ref">
                   <span className="pf-ref-tag">{c.reference}</span>
                   <span className={`badge badge-${statusColor}`}>{statusLabel}</span>
+                  {c.status !== 'zoho_posted' && (
+                    <button
+                      className="pf-delete-btn"
+                      title="Delete this run"
+                      onClick={e => { e.stopPropagation(); onDelete(c); }}
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/>
+                      </svg>
+                    </button>
+                  )}
                 </div>
                 <div className="pf-case-meta">
                   <span>{c.entity_name || c.entity}</span>

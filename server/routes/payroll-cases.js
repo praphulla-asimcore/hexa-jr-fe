@@ -1202,6 +1202,26 @@ router.post('/:id/post-zoho', requireAuth, async (req, res) => {
   res.json({ journalId: journal?.journal_id, referenceNumber: kase.reference });
 });
 
+// ─── Delete case (only if not completed) ─────────────────────────────────────
+
+router.delete('/:id', requireAuth, async (req, res) => {
+  const db = getDb();
+  if (!db) return res.status(503).json({ error: 'Database not configured.' });
+
+  const { data: kase } = await db.from('payroll_cases').select('id,status,reference').eq('id', req.params.id).single();
+  if (!kase) return res.status(404).json({ error: 'Case not found.' });
+  if (kase.status === 'zoho_posted') {
+    return res.status(403).json({ error: 'Completed cases cannot be deleted.' });
+  }
+
+  // Delete tokens and audit log first (FK cascade should handle it, but be explicit)
+  await db.from('payroll_approval_tokens').delete().eq('case_id', kase.id);
+  await db.from('payroll_audit_log').delete().eq('case_id', kase.id);
+  await db.from('payroll_cases').delete().eq('id', kase.id);
+
+  res.json({ deleted: true, reference: kase.reference });
+});
+
 // ─── Get case (with audit log) ────────────────────────────────────────────────
 
 router.get('/:id', requireAuth, async (req, res) => {
