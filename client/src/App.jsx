@@ -9,6 +9,7 @@ import GlSelection from './screens/GlSelection.jsx';
 import JeReview from './screens/JeReview.jsx';
 import Summary from './screens/Summary.jsx';
 import FinanceOps from './screens/FinanceOps.jsx';
+import BankBeneficiaries from './screens/BankBeneficiaries.jsx';
 import './App.css';
 import './components/AdminPanel.css';
 import './components/Sidebar.css';
@@ -87,6 +88,7 @@ export default function App() {
   const [section, setSection] = useState('dashboard');
   const [adminOpen, setAdminOpen] = useState(false);
   const [zohoConfigured, setZohoConfigured] = useState(null);
+  const [resumePirId, setResumePirId] = useState(null);
 
   // Check if this is an invite acceptance URL
   const isInvitePage = window.location.pathname === '/accept-invite' || window.location.search.includes('token=');
@@ -127,10 +129,24 @@ export default function App() {
         zohoConfigured={zohoConfigured}
       />
       <main className="app-content">
-        {section === 'dashboard' && <Dashboard />}
+        {section === 'dashboard' && (
+          <Dashboard
+            authToken={authToken}
+            onSection={setSection}
+            onResumePir={(id) => { setResumePirId(id); }}
+          />
+        )}
         {section === 'csi' && <JournalFlow module="csi" user={user} authToken={authToken} />}
         {section === 'payroll' && <JournalFlow module="payroll" user={user} authToken={authToken} />}
-        {section === 'finops' && <FinanceOps authToken={authToken} user={user} />}
+        {section === 'finops' && (
+          <FinanceOps
+            authToken={authToken}
+            user={user}
+            resumePirId={resumePirId}
+            key={resumePirId || 'finops'}
+          />
+        )}
+        {section === 'beneficiaries' && <BankBeneficiaries />}
       </main>
       {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} adminToken={authToken} />}
     </div>

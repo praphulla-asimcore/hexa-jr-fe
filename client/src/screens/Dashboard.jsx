@@ -12,19 +12,36 @@ function fmtMonth(ym) {
   return d.toLocaleDateString('en-MY', { month: 'short', year: 'numeric' });
 }
 
-export default function Dashboard() {
+const STATUS_META = {
+  pending:  { label: 'Pending Approval', cls: 'badge-warning' },
+  approved: { label: 'Approved',         cls: 'badge-success' },
+  rejected: { label: 'Rejected',         cls: 'badge-danger'  },
+};
+
+export default function Dashboard({ authToken, onSection, onResumePir }) {
   const [stats, setStats] = useState(null);
   const [posts, setPosts] = useState([]);
+  const [pirs, setPirs] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const headers = authToken ? { 'x-auth-token': authToken } : {};
+
   useEffect(() => {
-    Promise.all([
+    const apiCalls = [
       fetch('/api/journal-history/stats').then((r) => r.json()),
       fetch('/api/journal-history').then((r) => r.json()),
-    ]).then(([s, p]) => {
-      setStats(s);
-      setPosts(p.posts || []);
-    }).catch(() => {}).finally(() => setLoading(false));
+    ];
+    if (authToken) {
+      apiCalls.push(fetch('/api/finops/history', { headers }).then((r) => r.json()));
+    }
+    Promise.all(apiCalls)
+      .then(([s, p, finops]) => {
+        setStats(s);
+        setPosts(p.posts || []);
+        if (finops) setPirs(finops.approvals || []);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
   if (loading) return <div className="dash-loading"><span className="spinner" /> Loading dashboard...</div>;
@@ -113,6 +130,50 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {/* Finance Ops activity */}
+      {pirs.length > 0 && (
+        <div className="dash-panel card" style={{ marginTop: 20 }}>
+          <div className="dash-panel-title">Finance Ops — PIR Approvals</div>
+          <div className="dash-activity">
+            {pirs.slice(0, 10).map((p) => {
+              const meta = STATUS_META[p.approval_status] || STATUS_META.pending;
+              const isPending = p.approval_status === 'pending';
+              return (
+                <div key={p.id} className="dash-activity-row">
+                  <div className="dash-activity-left">
+                    <span className={`badge ${meta.cls}`}>{meta.label}</span>
+                    <span className="dash-activity-ref">
+                      {p.payout_date ? new Date(p.payout_date + 'T00:00:00').toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                    </span>
+                    <span className="dash-activity-entity">{p.created_by_name || '—'}</span>
+                  </div>
+                  <div className="dash-activity-right">
+                    <span className="dash-activity-amount">RM {fmt(p.total_amount)}</span>
+                    {p.email_sent_at && (
+                      <span className="dash-activity-date" title={`Email sent ${new Date(p.email_sent_at).toLocaleString('en-MY')}`}>
+                        Email sent
+                      </span>
+                    )}
+                    {isPending && onSection && (
+                      <button
+                        className="btn btn-primary btn-sm"
+                        style={{ fontSize: 11, padding: '3px 10px' }}
+                        onClick={() => { onResumePir && onResumePir(p.id); onSection('finops'); }}
+                      >
+                        Resume
+                      </button>
+                    )}
+                    {!isPending && p.approved_at && (
+                      <span className="dash-activity-date">{new Date(p.approved_at).toLocaleDateString('en-MY')}</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Recent activity */}
       <div className="dash-panel card" style={{ marginTop: 20 }}>

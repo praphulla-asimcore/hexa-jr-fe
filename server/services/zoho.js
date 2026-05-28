@@ -117,9 +117,29 @@ async function postJournalEntry(orgId, payload) {
   }
 }
 
+async function createExpense(orgId, payload) {
+  const token = await getAccessToken();
+  const tld = getZohoDomain();
+  const url = `https://www.zohoapis.${tld}/books/v3/expenses`;
+  try {
+    const response = await axios.post(url, payload, {
+      headers: {
+        Authorization: `Zoho-oauthtoken ${token}`,
+        'Content-Type': 'application/json',
+      },
+      params: { organization_id: String(orgId).trim() },
+    });
+    const data = response.data;
+    if (data.code !== 0) throw new Error(`Zoho Expense error [${data.code}]: ${data.message}`);
+    return data.expense;
+  } catch (err) {
+    throw zohoError('expense', err);
+  }
+}
+
 function clearTokenCache() {
   cachedToken = null;
   tokenExpiry = 0;
 }
 
-module.exports = { getAccessToken, fetchAccounts, postJournalEntry, clearTokenCache };
+module.exports = { getAccessToken, fetchAccounts, postJournalEntry, createExpense, clearTokenCache };

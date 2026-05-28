@@ -240,3 +240,37 @@
     padding: 5px 8px;
   }
 }
+
+/* Payment Completed section */
+.finops-payment-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.finops-payment-row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.finops-payment-success {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  border-radius: 10px;
+  padding: 16px 18px;
+  color: #166534;
+  margin-top: 4px;
+}
+
+.finops-payment-success svg {
+  flex-shrink: 0;
+  color: #16a34a;
+  margin-top: 1px;
+}

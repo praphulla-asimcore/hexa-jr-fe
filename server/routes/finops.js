@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const XLSX = require('xlsx');
 const { getDb } = require('../services/db');
 const { sendPirApprovalEmail } = require('../services/email');
+const { createExpense } = require('../services/zoho');
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'hexa-jwt-secret-change-in-prod';
@@ -229,6 +230,18 @@ router.get('/pir-status/:id', requireAuth, async (req, res) => {
   res.json(data || { approval_status: 'pending' });
 });
 
+// GET /api/finops/pir/:id — full record for workflow resume
+router.get('/pir/:id', requireAuth, async (req, res) => {
+  const db = getDb();
+  if (!db) return res.status(503).json({ error: 'Database not configured.' });
+  const { data, error } = await db.from('pir_approvals')
+    .select('*')
+    .eq('id', req.params.id)
+    .single();
+  if (error || !data) return res.status(404).json({ error: 'PIR not found.' });
+  res.json(data);
+});
+
 // GET /api/finops/history
 router.get('/history', requireAuth, async (req, res) => {
   const db = getDb();
@@ -238,6 +251,66 @@ router.get('/history', requireAuth, async (req, res) => {
     .order('created_at', { ascending: false })
     .limit(50);
   res.json({ approvals: data || [] });
+});
+
+// POST /api/finops/book-payment
+// Creates one Zoho Books Expense per consultant in parallel (avoids sequential timeout).
+// Mirrors the Zoho expense import CSV format: Expense Account = payable, Paid Through = bank.
+router.post('/book-payment', requireAuth, async (req, res) => {
+  const { pirId, orgId, payableAccountId, bankAccountId, payoutDate, beneficiaryData } = req.body;
+
+  if (!orgId || !payableAccountId || !bankAccountId || !payoutDate || !beneficiaryData?.length) {
+    return res.status(400).json({ error: 'orgId, payableAccountId, bankAccountId, payoutDate and beneficiaryData are required.' });
+  }
+
+  const matched = beneficiaryData.filter((b) => b.matched);
+  if (!matched.length) return res.status(400).json({ error: 'No matched beneficiaries to book.' });
+
+  const round2 = (n) => Math.round(parseFloat(n) * 100) / 100;
+  const [year, month, day] = payoutDate.split('-');
+  const mmyy = `${month}${year.slice(2)}`;
+  const refBase = `CSI-PMT-${day}${month}${year.slice(2)}`;
+
+  // Fire all expense creates concurrently — completes in ~1-2s regardless of consultant count
+  const results = await Promise.allSettled(
+    matched.map((b, idx) =>
+      createExpense(orgId, {
+        account_id: payableAccountId,
+        paid_through_account_id: bankAccountId,
+        date: payoutDate,
+        amount: round2(parseFloat(b.amount) || 0),
+        vendor_name: b.beneficiaryName,
+        description: `CSI Consultant Salary Payment - ${mmyy} - ${b.beneficiaryName}${b.favBeneCode ? ` (${b.favBeneCode})` : ''}`,
+        reference_number: `${refBase}-${String(idx + 1).padStart(3, '0')}`,
+        currency_code: 'MYR',
+        exchange_rate: 1,
+        is_billable: false,
+        is_inclusive_tax: false,
+      })
+    )
+  );
+
+  const booked = results.filter((r) => r.status === 'fulfilled').length;
+  const failures = results
+    .map((r, i) => (r.status === 'rejected' ? { name: matched[i].beneficiaryName, error: r.reason?.message } : null))
+    .filter(Boolean);
+
+  // Fire-and-forget DB update — use async IIFE to avoid Supabase .catch() incompatibility
+  const db = getDb();
+  if (db && pirId) {
+    (async () => {
+      try {
+        await db.from('pir_approvals').update({ approved_by: `payment-completed:${req.user.email}` }).eq('id', pirId);
+      } catch (_) {}
+    })();
+  }
+
+  if (booked === 0) {
+    return res.status(502).json({ error: `All ${failures.length} expenses failed. First: ${failures[0]?.error}` });
+  }
+
+  const total = round2(matched.reduce((s, b) => s + (parseFloat(b.amount) || 0), 0));
+  res.json({ booked, failed: failures.length, failures, total });
 });
 
 // POST /api/finops/generate-bank-report — stream Bank Report XLSX

@@ -10,6 +10,7 @@ const authRoute = require('./routes/auth');
 const usersRoute = require('./routes/users');
 const journalHistoryRoute = require('./routes/journalHistory');
 const finopsRoute = require('./routes/finops');
+const consultantsRoute = require('./routes/consultants');
 
 const app = express();
 
@@ -39,6 +40,7 @@ app.use('/api/auth', authRoute);
 app.use('/api/users', usersRoute);
 app.use('/api/journal-history', journalHistoryRoute);
 app.use('/api/finops', finopsRoute);
+app.use('/api/consultants', consultantsRoute);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 

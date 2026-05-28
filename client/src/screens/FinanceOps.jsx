@@ -1,4 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { REGISTERED_BENEFICIARIES } from '../data/beneficiaryData.js';
+import orgsConfig from '../orgsConfig.js';
 import './FinanceOps.css';
 
 function fmt(n) {
@@ -57,20 +59,6 @@ function downloadCSV(pirData) {
   URL.revokeObjectURL(url);
 }
 
-function downloadBeneficiaryTemplate() {
-  const header = ['Consultant Name', 'Payment Mode', 'Fav Bene Code', 'Account Number', 'Bank Code', 'ID Number', 'ID Type', 'Email', 'Advice Prefix'];
-  const example = ['Abinaya Subbiah', 'IT', 'HS123', '564089559370', 'MBBEMYKL', 'W4379591', 'passport', 'abinaya@example.com', 'Abinaya_CIMB'];
-  const note = ['# ID Type options: ic | old_ic | passport | brn', '', '', '', '', '', '', '', ''];
-  const esc = (v) => `"${String(v).replace(/"/g, '""')}"`;
-  const csv = [header, example, note].map((r) => r.map(esc).join(',')).join('\n');
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'Beneficiary_Master_Template.csv';
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 const STEPS = [
   { key: 'upload', label: 'Upload CSI' },
@@ -79,8 +67,20 @@ const STEPS = [
   { key: 'bank', label: 'Bank Upload' },
 ];
 
-export default function FinanceOps({ authToken, user }) {
-  const [step, setStep] = useState('upload');
+const STORAGE_KEY = 'hx_pir_state';
+
+function saveState(pirId, step) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ pirId, step })); } catch {}
+}
+function clearState() {
+  try { localStorage.removeItem(STORAGE_KEY); } catch {}
+}
+function loadState() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); } catch { return null; }
+}
+
+export default function FinanceOps({ authToken, user, resumePirId }) {
+  const [step, setStepRaw] = useState('upload');
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const [entities, setEntities] = useState([]);
@@ -88,23 +88,68 @@ export default function FinanceOps({ authToken, user }) {
   const [pirData, setPirData] = useState(null);
   const [pirId, setPirId] = useState(null);
   const [approvalStatus, setApprovalStatus] = useState('pending');
-  const [reviewerEmail, setReviewerEmail] = useState('');
-  const [approverEmail, setApproverEmail] = useState('');
+  const [reviewerEmail, setReviewerEmail] = useState('ujjwal@hexamatics.com');
+  const [approverEmail, setApproverEmail] = useState('praphulla@hexamatics.com');
   const [sendingEmail, setSendingEmail] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
   const [settingStatus, setSettingStatus] = useState(false);
   const [approvalError, setApprovalError] = useState('');
   const [beneficiaries, setBeneficiaries] = useState(null);
-  const [parseBeneLoading, setParseBeneLoading] = useState(false);
-  const [beneError, setBeneError] = useState('');
   const [generatingXlsx, setGeneratingXlsx] = useState(false);
   const [generatingTxt, setGeneratingTxt] = useState(false);
   const [bankError, setBankError] = useState('');
+  const [resuming, setResuming] = useState(false);
+
+  // Payment Completed state
+  const [paymentOrg, setPaymentOrg] = useState('HCSSB');
+  const [paymentAccounts, setPaymentAccounts] = useState([]);
+  const [loadingPaymentAccounts, setLoadingPaymentAccounts] = useState(false);
+  const [paymentAccountsError, setPaymentAccountsError] = useState('');
+  const [payableAccountId, setPayableAccountId] = useState('');
+  const [bankAccountId, setBankAccountId] = useState('');
+  const [bookingPayment, setBookingPayment] = useState(false);
+  const [paymentResult, setPaymentResult] = useState(null);
+  const [paymentError, setPaymentError] = useState('');
 
   const fileRef = useRef();
-  const beneFileRef = useRef();
 
   const headers = authToken ? { 'x-auth-token': authToken } : {};
+
+  function setStep(s) {
+    setStepRaw(s);
+    if (pirId) saveState(pirId, s);
+  }
+
+  // Restore saved workflow on mount (either from prop or localStorage)
+  useEffect(() => {
+    const saved = resumePirId ? { pirId: resumePirId, step: 'approval' } : loadState();
+    if (!saved?.pirId || !authToken) return;
+    setResuming(true);
+    fetch(`/api/finops/pir/${saved.pirId}`, { headers })
+      .then((r) => r.ok ? r.json() : null)
+      .then((rec) => {
+        if (!rec?.pir_data) return;
+        setPirData(rec.pir_data);
+        setPayoutDate(rec.payout_date || '');
+        setPirId(rec.id);
+        setApprovalStatus(rec.approval_status || 'pending');
+        setReviewerEmail(rec.reviewer_email || 'ujjwal@hexamatics.com');
+        setApproverEmail(rec.approver_email || 'praphulla@hexamatics.com');
+        setEmailSent(!!rec.email_sent_at);
+        const restoredStep = rec.approval_status === 'approved' ? 'bank'
+          : rec.approval_status === 'rejected' ? 'approval'
+          : saved.step || 'approval';
+        setStepRaw(restoredStep);
+        saveState(rec.id, restoredStep);
+      })
+      .catch(() => {})
+      .finally(() => setResuming(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist pirId+step whenever either changes
+  useEffect(() => {
+    if (pirId) saveState(pirId, step);
+  }, [pirId, step]);
 
   // ── Step 1: Upload ──────────────────────────────────────
   async function handleFileUpload(file) {
@@ -138,10 +183,10 @@ export default function FinanceOps({ authToken, user }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Save failed.');
       setPirId(data.id);
-      setStep('approval');
+      saveState(data.id, 'approval');
+      setStepRaw('approval');
     } catch (err) {
-      // proceed anyway with local state
-      setStep('approval');
+      setStepRaw('approval');
     }
   }
 
@@ -183,39 +228,42 @@ export default function FinanceOps({ authToken, user }) {
     }
   }
 
-  // ── Step 4: parse beneficiary master ───────────────────
-  async function handleBeneFile(file) {
-    setParseBeneLoading(true); setBeneError('');
-    const fd = new FormData();
-    fd.append('file', file);
-    try {
-      const res = await fetch('/api/finops/parse-beneficiary', { method: 'POST', headers, body: fd });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Parse failed.');
-      // Auto-match by name
-      const matched = matchBeneficiaries(entities, data.beneficiaries, pirData);
-      setBeneficiaries(matched);
-    } catch (err) {
-      setBeneError(err.message);
-    } finally {
-      setParseBeneLoading(false);
+  // ── Step 4: auto-match from Bank Beneficiary Registry ──
+  function autoMatchFromRegistry(rows) {
+    const byName = {};
+    for (const b of REGISTERED_BENEFICIARIES) {
+      byName[b.name.toLowerCase().trim()] = b;
     }
-  }
-
-  function matchBeneficiaries(entities, beneMaster, pirData) {
-    const beneMap = {};
-    for (const b of beneMaster) beneMap[b.beneficiaryName.toLowerCase()] = b;
-    return pirData.rows.map((row) => {
-      const b = beneMap[row.beneficiary.toLowerCase()];
+    return rows.map((row) => {
+      const reg = byName[row.beneficiary.toLowerCase().trim()];
+      if (!reg) {
+        return { beneficiaryName: row.beneficiary, amount: row.amountRequested, description: row.description, matched: false };
+      }
+      const idType = reg.idType === 'NRIC' ? 'ic' : 'passport';
+      const idNumber = reg.idType === 'NRIC' ? reg.idNew : reg.passport;
+      const paymentMode = reg.bankCode === 'MBBEMYKL' ? 'IT' : 'IG';
       return {
         beneficiaryName: row.beneficiary,
         amount: row.amountRequested,
         description: row.description,
-        ...(b || {}),
-        matched: !!b,
+        favBeneCode: reg.code,
+        accountNumber: reg.accountNo,
+        bankCode: reg.bankCode,
+        idNumber,
+        idType,
+        paymentMode,
+        email: reg.email || '',
+        advicePrefix: row.beneficiary,
+        matched: true,
       };
     });
   }
+
+  useEffect(() => {
+    if (step === 'bank' && pirData?.rows && !beneficiaries) {
+      setBeneficiaries(autoMatchFromRegistry(pirData.rows));
+    }
+  }, [step, pirData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleDownload(type) {
     const setter = type === 'xlsx' ? setGeneratingXlsx : setGeneratingTxt;
@@ -245,8 +293,72 @@ export default function FinanceOps({ authToken, user }) {
     }
   }
 
+  // ── Payment Completed ───────────────────────────────────
+  async function loadPaymentAccounts(orgKey) {
+    const org = orgsConfig[orgKey];
+    if (!org?.id) return;
+    setLoadingPaymentAccounts(true);
+    setPaymentAccountsError('');
+    setPayableAccountId('');
+    setBankAccountId('');
+    setPaymentAccounts([]);
+    try {
+      const res = await fetch(`/api/accounts/${org.id}`, { headers });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load accounts.');
+      setPaymentAccounts(data.accounts || []);
+    } catch (err) {
+      setPaymentAccountsError(err.message);
+    } finally {
+      setLoadingPaymentAccounts(false);
+    }
+  }
+
+  async function handleBookPayment() {
+    if (!payableAccountId || !bankAccountId) {
+      setPaymentError('Please select both the payable account and bank account.');
+      return;
+    }
+    const matched = (beneficiaries || []).filter((b) => b.matched);
+    if (!matched.length) { setPaymentError('No matched consultants to book.'); return; }
+
+    setBookingPayment(true);
+    setPaymentError('');
+    setPaymentResult(null);
+
+    try {
+      const org = orgsConfig[paymentOrg];
+      const res = await fetch('/api/finops/book-payment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({
+          pirId,
+          orgId: org.id,
+          payableAccountId,
+          bankAccountId,
+          payoutDate,
+          beneficiaryData: matched,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Booking failed.');
+      setPaymentResult(data);
+    } catch (err) {
+      setPaymentError(err.message);
+    } finally {
+      setBookingPayment(false);
+    }
+  }
+
   // ── Step indicator ─────────────────────────────────────
   const stepIdx = STEPS.findIndex((s) => s.key === step);
+
+  if (resuming) return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 32, color: 'var(--text-muted)' }}>
+      <span className="spinner" />
+      Restoring your workflow…
+    </div>
+  );
 
   return (
     <div className="finops-screen fade-in">
@@ -448,48 +560,77 @@ export default function FinanceOps({ authToken, user }) {
       {step === 'bank' && (
         <div className="fade-in">
           <div className="finops-card card">
-            <h2 className="finops-section-title">Bank Payment File</h2>
-            <p className="finops-hint">Upload a Beneficiary Master file to match banking details (account numbers, bank codes, ICs) with CSI consultants, then generate the Bank Report XLSX and RCgen TXT.</p>
-
-            <div className="finops-bene-actions">
-              <button className="btn btn-secondary btn-sm" onClick={downloadBeneficiaryTemplate}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                Download Template
-              </button>
-              <button className="btn btn-secondary btn-sm" onClick={() => beneFileRef.current?.click()} disabled={parseBeneLoading}>
-                {parseBeneLoading ? <><span className="spinner" style={{ width: 14, height: 14 }} />Parsing...</> : 'Upload Beneficiary Master'}
-              </button>
-              <input ref={beneFileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files[0]; if (f) handleBeneFile(f); e.target.value = ''; }} />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+              <h2 className="finops-section-title" style={{ margin: 0 }}>Bank Payment File</h2>
+              <span className="badge badge-info" style={{ fontSize: 11 }}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 4, verticalAlign: 'middle' }}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                Auto-matched from Bank Beneficiary Registry
+              </span>
             </div>
+            <p className="finops-hint" style={{ marginTop: 6 }}>
+              Banking details have been looked up automatically from the registered beneficiary list.
+              {beneficiaries && beneficiaries.some((b) => !b.matched) && (
+                <> Unmatched consultants are highlighted — add them to the <strong>Bank Beneficiaries</strong> registry first.</>
+              )}
+            </p>
 
-            {beneError && <div className="error-msg" style={{ marginTop: 12 }}>{beneError}</div>}
+            {!beneficiaries && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-muted)', padding: '20px 0' }}>
+                <span className="spinner" style={{ width: 18, height: 18 }} />
+                Matching against registry…
+              </div>
+            )}
 
             {beneficiaries && (
-              <div style={{ marginTop: 20 }}>
+              <div>
                 <div className="finops-match-summary">
-                  <span className="badge badge-success">{beneficiaries.filter((b) => b.matched).length} matched</span>
+                  <span className="badge badge-success">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 4 }}><polyline points="20 6 9 17 4 12"/></svg>
+                    {beneficiaries.filter((b) => b.matched).length} matched
+                  </span>
                   {beneficiaries.some((b) => !b.matched) && (
-                    <span className="badge badge-warning">{beneficiaries.filter((b) => !b.matched).length} unmatched</span>
+                    <span className="badge badge-warning">
+                      {beneficiaries.filter((b) => !b.matched).length} not in registry
+                    </span>
                   )}
-                  <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Unmatched consultants will be excluded from bank files.</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 4 }}>
+                    from {REGISTERED_BENEFICIARIES.length} registered beneficiaries
+                  </span>
                 </div>
 
                 <div className="finops-table-wrap" style={{ marginTop: 12 }}>
                   <table className="finops-table finops-table-sm">
                     <thead>
-                      <tr><th>Consultant</th><th>Amount (RM)</th><th>Mode</th><th>Account</th><th>Bank Code</th><th>Status</th></tr>
+                      <tr>
+                        <th>Code</th>
+                        <th>Consultant</th>
+                        <th style={{ textAlign: 'right' }}>Amount (RM)</th>
+                        <th>Mode</th>
+                        <th>Account No.</th>
+                        <th>Bank</th>
+                        <th>Status</th>
+                      </tr>
                     </thead>
                     <tbody>
                       {beneficiaries.map((b, i) => (
                         <tr key={i} className={b.matched ? '' : 'finops-row-unmatched'}>
+                          <td>
+                            {b.favBeneCode
+                              ? <span style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 700, color: 'var(--accent,#3b82f6)', background: 'var(--bg-secondary,#f0f0f0)', borderRadius: 4, padding: '1px 5px' }}>{b.favBeneCode}</span>
+                              : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                          </td>
                           <td>{b.beneficiaryName}</td>
                           <td style={{ textAlign: 'right' }}>{fmt(b.amount)}</td>
-                          <td>{b.paymentMode || '—'}</td>
-                          <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{b.accountNumber || '—'}</td>
-                          <td>{b.bankCode || '—'}</td>
+                          <td>
+                            {b.paymentMode
+                              ? <span className={`badge ${b.paymentMode === 'IT' ? 'badge-info' : 'badge-neutral'}`}>{b.paymentMode}</span>
+                              : '—'}
+                          </td>
+                          <td style={{ fontFamily: 'monospace', fontSize: 11 }}>{b.accountNumber || '—'}</td>
+                          <td style={{ fontSize: 12 }}>{b.bankCode || '—'}</td>
                           <td>
                             <span className={`badge ${b.matched ? 'badge-success' : 'badge-warning'}`}>
-                              {b.matched ? 'Matched' : 'No data'}
+                              {b.matched ? 'Ready' : 'Not found'}
                             </span>
                           </td>
                         </tr>
@@ -503,28 +644,157 @@ export default function FinanceOps({ authToken, user }) {
 
           {beneficiaries?.some((b) => b.matched) && (
             <div className="finops-card card" style={{ marginTop: 16 }}>
-              <h2 className="finops-section-title">Generate Files</h2>
+              <h2 className="finops-section-title">Generate &amp; Download</h2>
               {bankError && <div className="error-msg" style={{ marginBottom: 12 }}>{bankError}</div>}
               <div className="finops-generate-actions">
                 <div className="finops-generate-item">
                   <div>
-                    <div style={{ fontWeight: 600, marginBottom: 2 }}>Bank Report XLSX</div>
-                    <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Structured payment data — import into RCGEN2 or use directly.</div>
+                    <div style={{ fontWeight: 600, marginBottom: 2 }}>RCgen TXT — Bank Upload File</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                      Maybank2E RCMS pipe-delimited format. Upload directly to the bank portal.
+                    </div>
                   </div>
-                  <button className="btn btn-primary btn-sm" onClick={() => handleDownload('xlsx')} disabled={generatingXlsx}>
-                    {generatingXlsx ? <><span className="spinner" style={{ width: 14, height: 14 }} />Generating...</> : 'Download XLSX'}
+                  <button className="btn btn-primary btn-sm" onClick={() => handleDownload('txt')} disabled={generatingTxt}>
+                    {generatingTxt ? <><span className="spinner" style={{ width: 14, height: 14 }} />Generating…</> : (
+                      <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 5 }}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Download TXT</>
+                    )}
                   </button>
                 </div>
                 <div className="finops-generate-item">
                   <div>
-                    <div style={{ fontWeight: 600, marginBottom: 2 }}>RCgen TXT (Bank Upload)</div>
-                    <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Maybank2E RCMS format. Note: security key in header is blank — test acceptance with your bank.</div>
+                    <div style={{ fontWeight: 600, marginBottom: 2 }}>Bank Report XLSX</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Structured payment data — import into RCGEN2 or keep as record.</div>
                   </div>
-                  <button className="btn btn-secondary btn-sm" onClick={() => handleDownload('txt')} disabled={generatingTxt}>
-                    {generatingTxt ? <><span className="spinner" style={{ width: 14, height: 14 }} />Generating...</> : 'Download TXT'}
+                  <button className="btn btn-secondary btn-sm" onClick={() => handleDownload('xlsx')} disabled={generatingXlsx}>
+                    {generatingXlsx ? <><span className="spinner" style={{ width: 14, height: 14 }} />Generating…</> : (
+                      <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 5 }}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Download XLSX</>
+                    )}
                   </button>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Payment Completed */}
+          {beneficiaries?.some((b) => b.matched) && (
+            <div className="finops-card card" style={{ marginTop: 16 }}>
+              <div className="finops-payment-header">
+                <div>
+                  <h2 className="finops-section-title" style={{ margin: 0 }}>Payment Completed</h2>
+                  <p className="finops-hint" style={{ marginTop: 4, marginBottom: 0 }}>
+                    Once the Director approves and executes the payment in the bank, click below to automatically book the reversal entry in Zoho Books
+                    (<strong>Dr Consultant Salary Payable / Cr Bank</strong>).
+                  </p>
+                </div>
+                {paymentResult && (
+                  <span className="badge badge-success" style={{ flexShrink: 0 }}>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 4 }}><polyline points="20 6 9 17 4 12"/></svg>
+                    {paymentResult.booked} posted
+                  </span>
+                )}
+              </div>
+
+              {!paymentResult && (
+                <>
+                  <div className="finops-payment-row">
+                    <div className="finops-field" style={{ flex: 1, minWidth: 180 }}>
+                      <label className="label">Zoho Entity</label>
+                      <select
+                        value={paymentOrg}
+                        onChange={(e) => { setPaymentOrg(e.target.value); setPaymentAccounts([]); setPayableAccountId(''); setBankAccountId(''); }}
+                      >
+                        {Object.entries(orgsConfig).map(([key, org]) => (
+                          <option key={key} value={key}>{org.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{ paddingTop: 26 }}>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => loadPaymentAccounts(paymentOrg)}
+                        disabled={loadingPaymentAccounts}
+                      >
+                        {loadingPaymentAccounts
+                          ? <><span className="spinner" style={{ width: 13, height: 13 }} />Loading…</>
+                          : 'Load Accounts'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {paymentAccountsError && <div className="error-msg" style={{ marginTop: 8 }}>{paymentAccountsError}</div>}
+
+                  {paymentAccounts.length > 0 && (
+                    <div className="finops-payment-row" style={{ marginTop: 12 }}>
+                      <div className="finops-field" style={{ flex: 1, minWidth: 200 }}>
+                        <label className="label">Consultant Salary Payable Account <span style={{ color: 'var(--danger)' }}>*</span></label>
+                        <select value={payableAccountId} onChange={(e) => setPayableAccountId(e.target.value)}>
+                          <option value="">— select payable account —</option>
+                          {paymentAccounts.map((a) => (
+                            <option key={a.id} value={a.id}>{a.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="finops-field" style={{ flex: 1, minWidth: 200 }}>
+                        <label className="label">Bank Account <span style={{ color: 'var(--danger)' }}>*</span></label>
+                        <select value={bankAccountId} onChange={(e) => setBankAccountId(e.target.value)}>
+                          <option value="">— select bank account —</option>
+                          {paymentAccounts.filter((a) => a.type === 'bank' || a.type === 'cash' || /bank|cash/i.test(a.type)).map((a) => (
+                            <option key={a.id} value={a.id}>{a.name}</option>
+                          ))}
+                          {paymentAccounts.filter((a) => !/bank|cash/i.test(a.type)).length > 0 && (
+                            <optgroup label="Other accounts">
+                              {paymentAccounts.filter((a) => !/bank|cash/i.test(a.type)).map((a) => (
+                                <option key={a.id + '_o'} value={a.id}>{a.name} ({a.type})</option>
+                              ))}
+                            </optgroup>
+                          )}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
+                  {paymentError && <div className="error-msg" style={{ marginTop: 12 }}>{paymentError}</div>}
+
+                  <div style={{ marginTop: 16 }}>
+                    <button
+                      className="btn btn-primary"
+                      onClick={handleBookPayment}
+                      disabled={bookingPayment || !payableAccountId || !bankAccountId}
+                    >
+                      {bookingPayment
+                        ? <><span className="spinner" style={{ width: 14, height: 14 }} />Posting to Zoho Books…</>
+                        : (
+                          <>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}><polyline points="20 6 9 17 4 12"/></svg>
+                            Payment Completed — Post to Zoho Books
+                          </>
+                        )}
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {paymentResult && (
+                <div className="finops-payment-success">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="20 6 9 17 4 12"/></svg>
+                  <div>
+                    <div style={{ fontWeight: 600 }}>
+                      {paymentResult.booked} expense {paymentResult.booked === 1 ? 'entry' : 'entries'} posted to Zoho Books
+                      {paymentResult.failed > 0 && <span style={{ color: 'var(--danger)', marginLeft: 8 }}>({paymentResult.failed} failed)</span>}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                      Dr Consultant Salary Payable / Cr Bank — {beneficiaries.filter((b) => b.matched).length} consultants · RM {fmt(beneficiaries.filter((b) => b.matched).reduce((s, b) => s + parseFloat(b.amount || 0), 0))}
+                    </div>
+                    {paymentResult.errors?.length > 0 && (
+                      <div style={{ marginTop: 8 }}>
+                        {paymentResult.errors.map((e, i) => (
+                          <div key={i} className="error-msg" style={{ fontSize: 12, marginBottom: 4 }}>{e.name}: {e.error}</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -533,7 +803,7 @@ export default function FinanceOps({ authToken, user }) {
               <button className="btn btn-secondary" onClick={() => setStep('approval')}>Back</button>
             </div>
             <div className="page-actions-right">
-              <button className="btn btn-secondary" onClick={() => { setStep('upload'); setEntities([]); setPirData(null); setPirId(null); setApprovalStatus('pending'); setEmailSent(false); setBeneficiaries(null); }}>
+              <button className="btn btn-secondary" onClick={() => { clearState(); setStepRaw('upload'); setEntities([]); setPirData(null); setPirId(null); setApprovalStatus('pending'); setEmailSent(false); setBeneficiaries(null); }}>
                 New PIR
               </button>
             </div>
