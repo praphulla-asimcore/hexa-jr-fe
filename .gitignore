@@ -8,4 +8,9 @@ dist/
 client/dist/
 *.xlsx
 *.xls
+*.xlsm
 .vercel
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
