@@ -10,7 +10,7 @@ from app.config import TEMPLATES_DIR, APP_URL, APPROVERS, ORGS
 from app.deps import get_current_user
 from app.services.db import get_db
 from app.services.parser import parse_excel_buffer
-from app.services.zoho import post_journal_entry, create_expense, attach_journal_document, attach_expense_document
+from app.services.zoho import post_journal_entry, create_expense, attach_journal_document, attach_expense_document, search_contact_by_name
 from app.services.bank_files import generate_and_store_bank_files
 from app.services.pdf import build_check_report_pdf, build_audit_package_pdf
 from app.services.email import (
@@ -399,18 +399,30 @@ async def send_check_approval(case_id: str, request: Request):
             for ent in entities for emp in ent.get("employees", [])
         ]
         journal_date = kase.get("payment_date") or now[:10]
+        contact_cache: dict[str, str | None] = {}
         for emp in all_employees:
             amount = _round2(emp.get("ctcHexa", 0))
+            emp_name = emp.get("name", "")
+            if emp_name not in contact_cache:
+                try:
+                    contact_cache[emp_name] = await search_contact_by_name(org_id, emp_name)
+                except Exception:
+                    contact_cache[emp_name] = None
+            contact_id = contact_cache[emp_name]
+            journal_payload = {
+                "journal_date": journal_date,
+                "journal_type": "vendor_journal",
+                "reference_number": f"ACCR-{kase['reference']}-{emp['employeeId']}",
+                "notes": f"Payroll Accrual – {kase['period']} – {emp['name']} ({emp['employeeId']}) – Ref: {kase['reference']}",
+                "line_items": [
+                    {"account_id": debit_account_id, "debit_or_credit": "debit", "amount": amount, "description": f"{emp['name']} – {kase['period']}"},
+                    {"account_id": credit_account_id, "debit_or_credit": "credit", "amount": amount, "description": f"{emp['name']} – {kase['period']}"},
+                ],
+            }
+            if contact_id:
+                journal_payload["customer_id"] = contact_id
             try:
-                j = await post_journal_entry(org_id, {
-                    "journal_date": journal_date,
-                    "reference_number": f"ACCR-{kase['reference']}-{emp['employeeId']}",
-                    "notes": f"Payroll Accrual – {kase['period']} – {emp['name']} ({emp['employeeId']}) – Ref: {kase['reference']}",
-                    "line_items": [
-                        {"account_id": debit_account_id, "debit_or_credit": "debit", "amount": amount, "description": f"{emp['name']} – {kase['period']}"},
-                        {"account_id": credit_account_id, "debit_or_credit": "credit", "amount": amount, "description": f"{emp['name']} – {kase['period']}"},
-                    ],
-                })
+                j = await post_journal_entry(org_id, journal_payload)
                 accrual_results.append({"name": emp["name"], "journalId": j.get("journal_id"), "success": True})
             except Exception as e:
                 accrual_results.append({"name": emp["name"], "error": str(e), "success": False})
@@ -423,11 +435,14 @@ async def send_check_approval(case_id: str, request: Request):
 
         first_accrual_id = next((r["journalId"] for r in accrual_results if r.get("success") and r.get("journalId")), None)
         if first_accrual_id:
+            attach_error = None
             try:
                 check_pdf = build_check_report_pdf(kase)
                 await attach_journal_document(org_id, first_accrual_id, check_pdf, f"CheckReport-{kase['reference']}.pdf", "application/pdf")
-            except Exception:
-                pass
+            except Exception as e:
+                attach_error = str(e)
+            if attach_error:
+                await _audit_log(db, case_id, "ZOHO_ATTACH_ERROR", "system", None, None, {"step": 3, "journalId": first_accrual_id, "error": attach_error})
 
     db.from_("payroll_cases").update({
         "status": "check_approval_sent", "check_approval_sent_at": now,
@@ -803,18 +818,29 @@ async def post_zoho(case_id: str, request: Request):
 
     now = _now()
     results = []
+    pmt_contact_cache: dict[str, str | None] = {}
     for emp in all_employees:
         amount = _round2(emp.get("ctcHexa", 0))
+        emp_name = emp.get("name", "")
+        if emp_name not in pmt_contact_cache:
+            try:
+                pmt_contact_cache[emp_name] = await search_contact_by_name(org_id, emp_name)
+            except Exception:
+                pmt_contact_cache[emp_name] = None
+        contact_id = pmt_contact_cache[emp_name]
+        expense_payload = {
+            "account_id": payable_account_id,
+            "paid_through_account_id": bank_account_id,
+            "date": journal_date,
+            "amount": amount,
+            "description": f"{kase['type']} Salary Payment – {emp['name']} ({emp['employeeId']}) – {kase['period']} – Ref: {kase['reference']} – Approved: {kase.get('payment_approved_by')}",
+            "reference_number": f"ACCR-{kase['reference']}-{emp['employeeId']}",
+            "currency_code": "MYR", "exchange_rate": 1, "is_billable": False,
+        }
+        if contact_id:
+            expense_payload["vendor_id"] = contact_id
         try:
-            expense = await create_expense(org_id, {
-                "account_id": payable_account_id,
-                "paid_through_account_id": bank_account_id,
-                "date": journal_date,
-                "amount": amount,
-                "description": f"{kase['type']} Salary Payment – {emp['name']} ({emp['employeeId']}) – {kase['period']} – Ref: {kase['reference']} – Approved: {kase.get('payment_approved_by')}",
-                "reference_number": f"PMT-{kase['reference']}-{emp['employeeId']}",
-                "currency_code": "MYR", "exchange_rate": 1, "is_billable": False,
-            })
+            expense = await create_expense(org_id, expense_payload)
             results.append({"employeeId": emp["employeeId"], "name": emp["name"], "amount": amount, "journalId": expense.get("expense_id"), "success": True})
         except Exception as e:
             results.append({"employeeId": emp["employeeId"], "name": emp["name"], "amount": amount, "error": str(e), "success": False})
@@ -828,6 +854,7 @@ async def post_zoho(case_id: str, request: Request):
 
     # Attach Check Report + Audit Package to first payment expense
     if journal_ids:
+        attach_errors = []
         try:
             logs_resp = db.from_("payroll_audit_log").select("*").eq("case_id", case_id).order("created_at").execute()
             logs = logs_resp.data or []
@@ -835,8 +862,10 @@ async def post_zoho(case_id: str, request: Request):
             audit_pdf = build_audit_package_pdf(kase, logs)
             await attach_expense_document(org_id, journal_ids[0], check_pdf, f"CheckReport-{kase['reference']}.pdf", "application/pdf")
             await attach_expense_document(org_id, journal_ids[0], audit_pdf, f"AuditPackage-{kase['reference']}.pdf", "application/pdf")
-        except Exception:
-            pass
+        except Exception as e:
+            attach_errors.append(str(e))
+        if attach_errors:
+            await _audit_log(db, case_id, "ZOHO_ATTACH_ERROR", "system", None, None, {"step": 7, "expenseId": journal_ids[0], "error": attach_errors[0]})
 
     db.from_("payroll_cases").update({
         "status": "zoho_posted", "zoho_org_id": org_id,

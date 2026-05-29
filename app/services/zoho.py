@@ -120,6 +120,22 @@ async def attach_expense_document(org_id: str, expense_id: str, file_bytes: byte
     return data
 
 
+async def search_contact_by_name(org_id: str, name: str) -> str | None:
+    """Return contact_id if a Zoho contact matches this name exactly (case-insensitive), else None."""
+    token = await get_access_token()
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(
+            f"{_zoho_base()}/contacts",
+            headers={"Authorization": f"Zoho-oauthtoken {token}"},
+            params={"organization_id": str(org_id).strip(), "search_text": name, "per_page": 10},
+        )
+        data = resp.json()
+    for c in data.get("contacts", []):
+        if c.get("contact_name", "").strip().lower() == name.strip().lower():
+            return c["contact_id"]
+    return None
+
+
 def clear_token_cache() -> None:
     global _cached_token, _token_expiry
     _cached_token = ""
