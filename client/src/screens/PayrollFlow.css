@@ -148,6 +148,15 @@
   min-height: 400px;
 }
 
+.pf-panel-fade {
+  animation: pf-step-fade 0.18s ease;
+}
+
+@keyframes pf-step-fade {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 .pf-panel-body { padding: 28px; }
 
 .pf-panel-header { margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }

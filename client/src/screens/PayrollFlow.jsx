@@ -48,7 +48,7 @@ function getActiveStep(status) {
     check_reviewer_approved: 3, check_rejected: 3, check_approved: 4,
     bank_file_generated: 5, bank_uploaded: 5,
     payment_approval_sent: 6, payment_rejected: 6,
-    payment_approved: 7, zoho_posted: 9,
+    payment_approved: 7, zoho_posted: 8,
   };
   return map[status] || 1;
 }
@@ -451,7 +451,9 @@ function CaseDetail({ caseData, authToken, user, onRefresh, onBack }) {
 
         {/* Step detail panel */}
         <div className="pf-panel">
-          <StepPanel step={selectedStep} kase={kase} logs={logs} authToken={authToken} user={user} onRefresh={onRefresh} />
+          <div key={selectedStep} className="pf-panel-fade">
+            <StepPanel step={selectedStep} kase={kase} logs={logs} authToken={authToken} user={user} onRefresh={onRefresh} />
+          </div>
         </div>
       </div>
     </div>
@@ -1132,7 +1134,7 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
           <div className="pf-gl-form">
             <div className="pf-form-section">
               <label className="label">Organisation</label>
-              <select className="input" value={orgId} onChange={e => { setOrgId(e.target.value); setAccounts([]); setDebitAccount(''); setCreditAccount(''); }}>
+              <select className="input" value={orgId} onChange={e => { setOrgId(e.target.value); setAccounts([]); setPayableAccount(''); setBankAccount(''); }}>
                 <option value="">— select org —</option>
                 {orgs.map(o => <option key={o.id} value={o.id}>{o.label} ({o.name})</option>)}
               </select>
@@ -1164,31 +1166,6 @@ function Step7Panel({ kase, authToken, user, onRefresh }) {
                   <option value="">— select —</option>
                   {accounts.map(a => <option key={a.id} value={a.id}>{a.type} — {a.name}</option>)}
                 </select>
-              </div>
-            </div>
-          )}
-
-          {accounts.length > 0 && (
-            <div style={{ marginTop: 20, padding: '14px 16px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8 }}>
-              <div className="pf-detail-card-title" style={{ marginBottom: 12 }}>
-                Zoho Expense — Bank Payment Entry
-                <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>(optional — books DR Salary Payable / CR Bank)</span>
-              </div>
-              <div className="pf-gl-form">
-                <div className="pf-form-section">
-                  <label className="label">Expense / Payable Account (DR)</label>
-                  <select className="input" value={expenseAccount} onChange={e => setExpenseAccount(e.target.value)}>
-                    <option value="">— skip expense entry —</option>
-                    {accounts.map(a => <option key={a.id} value={a.id}>{a.type} — {a.name}</option>)}
-                  </select>
-                </div>
-                <div className="pf-form-section">
-                  <label className="label">Bank / Cash Account (CR)</label>
-                  <select className="input" value={bankAccount} onChange={e => setBankAccount(e.target.value)}>
-                    <option value="">— skip expense entry —</option>
-                    {accounts.map(a => <option key={a.id} value={a.id}>{a.type} — {a.name}</option>)}
-                  </select>
-                </div>
               </div>
             </div>
           )}
